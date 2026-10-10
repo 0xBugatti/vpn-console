@@ -1,0 +1,4 @@
+{"__CURSOR": "c1", "__REALTIME_TIMESTAMP": "1760082723000000", "PRIORITY": "6", "MESSAGE": "Starting Tailscale node agent..."}
+{"__CURSOR": "c2", "__REALTIME_TIMESTAMP": "1760082731000000", "PRIORITY": "3", "MESSAGE": "health(\"check UDP\"): dial udp failed: timeout"}
+{"__CURSOR": "c3", "__REALTIME_TIMESTAMP": "1760082740000000", "PRIORITY": "4", "MESSAGE": "control: retry in 30s"}
+{"__CURSOR": "c4", "__REALTIME_TIMESTAMP": "1760082750000000", "PRIORITY": "6", "MESSAGE": "Routine: startup complete"}

@@ -1,0 +1,5 @@
+{"__REALTIME_TIMESTAMP":"1760082723000000","PRIORITY":6,"MESSAGE":"Starting Tailscale node agent...","_SYSTEMD_UNIT":"tailscaled.service","_HOSTNAME":"build-server"}
+{"__REALTIME_TIMESTAMP":"1760082726000000","PRIORITY":6,"MESSAGE":"logtail started","_SYSTEMD_UNIT":"tailscaled.service","_HOSTNAME":"build-server"}
+{"__REALTIME_TIMESTAMP":"1760082731000000","PRIORITY":3,"MESSAGE":"health(\"check UDP\"): dial udp failed: timeout","_SYSTEMD_UNIT":"tailscaled.service","_HOSTNAME":"build-server"}
+{"__REALTIME_TIMESTAMP":"1760082740000000","PRIORITY":4,"MESSAGE":"control: retry in 30s","_SYSTEMD_UNIT":"tailscaled.service","_HOSTNAME":"build-server"}
+{"__REALTIME_TIMESTAMP":"1760082750000000","PRIORITY":6,"MESSAGE":"Routine: startup complete","_SYSTEMD_UNIT":"tailscaled.service","_HOSTNAME":"build-server"}

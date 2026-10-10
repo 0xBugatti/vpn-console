@@ -1,0 +1,7 @@
+{
+  "users": [
+    { "id": "u1", "loginName": "alice@example.com", "displayName": "Alice", "role": "owner" },
+    { "id": "u2", "loginName": "jonas@example.com", "displayName": "Jonas", "role": "member" },
+    { "id": "u3", "loginName": "visitor@example.com", "displayName": "", "role": "member" }
+  ]
+}

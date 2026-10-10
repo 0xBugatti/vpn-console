@@ -1,0 +1,6 @@
+{
+  "name": "fangorn.example.com",
+  "magicDNSEnabled": true,
+  "devicesApprovalEnabled": true,
+  "usersApprovalEnabled": false
+}

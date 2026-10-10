@@ -1,0 +1,29 @@
+### unit: tailscaled.service
+Id=tailscaled.service
+Description=Tailscale node agent
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+ExecMainStartTimestamp=Mon 2026-09-28 04:12:33 UTC
+ExecMainExitTimestampMonotonic=0
+Result=success
+
+### unit: openvpn@corp.service
+Id=openvpn@corp.service
+Description=OpenVPN connection to corp
+ActiveState=failed
+SubState=exit
+UnitFileState=disabled
+ExecMainStartTimestamp=Sun 2026-10-05 22:01:02 UTC
+ExecMainExitTimestamp=Sun 2026-10-05 22:01:09 UTC
+Result=exit-code
+
+### unit: vpn-console.service
+Id=vpn-console.service
+Description=Unified VPN Management Console
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+ExecMainStartTimestamp=Wed 2026-10-08 11:44:10 UTC
+ExecMainExitTimestampMonotonic=0
+Result=success

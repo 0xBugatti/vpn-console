@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+*.egg-info/
+.pytest_cache/
+data/
+*.db
+.env
+.env.*
+!.env.example
+deploy/admin-password.txt
+.DS_Store
+Thumbs.db
+*.swp

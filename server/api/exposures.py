@@ -1,0 +1,242 @@
+"""API: exposures — serve / funnel / taildrive view + port annotations (US10).
+
+Funnel is the only path to the public internet this console can open, so it
+carries the heaviest friction: the 443/8443/10000 port constraint is checked
+BEFORE the confirmation ask, and both funnel create and enable are
+confirm-tier. Everything is audited ok|failed (constitution III, FR-043/044).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Body
+
+from .. import audit
+from . import common
+from .schemas import api_error, require_confirm
+
+router = APIRouter()
+
+FUNNEL_PORTS = {443, 8443, 10000}
+
+
+def _serve_r():
+    return common.local_get("serve", ttl=10.0, fetch=common.local().serve_status)
+
+
+def _drive_r():
+    return common.local_get("drive", ttl=10.0, fetch=common.local().drive_status)
+
+
+def _ports_r():
+    return common.host_get("ports", ttl=15.0, fetch=common.host().listening_ports)
+
+
+def _handler_target(handler: dict[str, Any]) -> tuple[str, str]:
+    """(display, raw) pair for a serve Web handler."""
+    if "Proxy" in handler:
+        return f"proxy → {handler['Proxy']}", str(handler["Proxy"])
+    if "Path" in handler:
+        return f"path {handler['Path']}", str(handler["Path"])
+    if "Text" in handler:
+        return f"text · {handler['Text']}", ""
+    return "", ""
+
+
+def _entries(serve_cfg: dict[str, Any], drive_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    web = serve_cfg.get("Web") or {}
+    allow = serve_cfg.get("AllowFunnel") or {}
+    entries: list[dict[str, Any]] = []
+    for port, tcp in (serve_cfg.get("TCP") or {}).items():
+        if not str(port).isdigit():
+            continue
+        url = tcp.get("ServeURL") or ""
+        host = url.split("//")[-1].split(":")[0]
+        display, raw = _handler_target(web.get(f"{host}:{port}", {}).get("Handlers", {}).get("/") or {})
+        funnel = bool(allow.get(f"{host}:{port}"))
+        entries.append({
+            "id": f"tcp-{port}",
+            "kind": "funnel" if funnel else "serve",
+            "scope": "public" if funnel else "tailnet",
+            "source": url,
+            "target": display,
+            "raw_target": raw,
+            "port": int(port),
+            "tls": bool(tcp.get("MustAcceptTLS")),
+            "enabled": True,
+        })
+    for path, info in ((drive_cfg.get("Config") or {}).get("Shares") or {}).items():
+        entries.append({
+            "id": f"drive-{path}",
+            "kind": "taildrive",
+            "scope": "share",
+            "source": path,
+            "target": f"{info.get('access', 'read')} share",
+            "raw_target": path,
+            "port": None,
+            "tls": False,
+            "enabled": True,
+        })
+    return entries
+
+
+def _annotate(ports: list[dict[str, Any]], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    funnel_ports = {e["port"] for e in entries if e["kind"] == "funnel"}
+    serve_ports = {e["port"] for e in entries if e["kind"] == "serve"}
+    out = []
+    for p in ports:
+        row = dict(p)
+        if p["port"] in funnel_ports:
+            row["annotation"] = "funnel"
+        elif p["port"] in serve_ports:
+            row["annotation"] = "serve"
+        elif p["local_addr"].startswith(("127.", "::1", "[::1]:", "localhost")):
+            row["annotation"] = "local_only"
+        else:
+            row["annotation"] = "unexposed"
+        out.append(row)
+    return out
+
+
+def _collisions(entries: list[dict[str, Any]], serve_cfg: dict[str, Any]) -> list[int]:
+    """Ports where a funnel allowance and a serve listener disagree on the host
+    name — tailscaled keeps whichever claim was made most recently, so the UI
+    carries a standing warning until this is resolved."""
+    owner: dict[int, str] = {}
+    for e in entries:
+        if e["port"] is not None and e["kind"] in ("serve", "funnel"):
+            owner[e["port"]] = e["source"].split("//")[-1].split(":")[0]
+    coll: set[int] = set()
+    for key in (serve_cfg.get("AllowFunnel") or {}):
+        name, _, port = key.rpartition(":")
+        if not port.isdigit():
+            continue
+        if owner.get(int(port)) and name and name != owner[int(port)]:
+            coll.add(int(port))
+    return sorted(coll)
+
+
+def _find(entries: list[dict[str, Any]], eid: str) -> dict[str, Any]:
+    for e in entries:
+        if e["id"] == eid:
+            return e
+    raise api_error(404, "not_found", "Exposure entry not found (refresh to pick up changes).")
+
+
+@router.get("/exposures")
+def get_exposures() -> dict[str, Any]:
+    serve_r = _serve_r()
+    drive_r = _drive_r()
+    ports_r = _ports_r()
+    serve_cfg = (serve_r.data or {}).get("Config") or {}
+    drive_cfg = drive_r.data or {}
+    entries = _entries(serve_cfg, drive_cfg)
+    annotations = _annotate(ports_r.data or [], entries) if ports_r.data is not None else []
+    return {
+        "entries": entries,
+        "ports": annotations,
+        "collisions": _collisions(entries, serve_cfg),
+        "_health": _worst_health(serve_r, drive_r).as_dict(),
+        "ports_health": ports_r.health.as_dict(),
+    }
+
+
+def _worst_health(*results: Any) -> Any:
+    for r in results:
+        if r.health.state != "ok":
+            return r.health
+    return results[0].health
+
+
+def _blocked() -> None:
+    common.require_ok(_serve_r(), "local node")
+
+
+@router.post("/exposures")
+def create_exposure(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    kind = body.get("kind")
+    port = body.get("port")
+    target = str(body.get("target") or "").strip()
+    if kind not in ("serve", "funnel"):
+        raise api_error(422, "bad_kind", 'kind must be "serve" or "funnel" (drive shares are managed on the host).')
+    if not isinstance(port, int):
+        raise api_error(422, "bad_port", "port must be an integer.")
+    if not (target.startswith("http://") or target.startswith("https://") or target.startswith("/")):
+        raise api_error(422, "invalid_target", 'target must be an http(s):// URL or a filesystem path.')
+    tls = bool(body.get("tls", kind == "funnel"))
+
+    # Funnel reaches the whole internet — the port constraint comes FIRST,
+    # before friction (T063), so a bad port is rejected outright.
+    if kind == "funnel" and port not in FUNNEL_PORTS:
+        raise api_error(
+            400, "port_not_allowed",
+            f"Funnel only works on ports 443, 8443 and 10000 (got {port}).",
+        )
+    if kind == "funnel":
+        require_confirm(body)  # creating a public exposure is confirm-tier
+    _blocked()
+
+    scheme = "https" if tls else "http"
+    try:
+        common.local().serve_add(port, target, scheme=scheme, funnel=kind == "funnel")
+    except Exception as exc:  # noqa: BLE001 — audited boundary (SC-004)
+        audit.insert("exposure.create", "exposures", target=f"port {port}",
+                     outcome="failed", detail={"error": str(exc)[:300], "kind": kind})
+        raise api_error(502, "action_failed", f"tailscaled rejected the {kind}: {exc}") from exc
+    common.local_cache().invalidate("serve")
+    audit.insert("exposure.create", "exposures", target=f"port {port}",
+                 detail={"kind": kind, "port": port, "target": target, "funnel": kind == "funnel"})
+    return {"ok": True}
+
+
+@router.patch("/exposures/{eid:path}")
+def set_enabled(eid: str, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    _blocked()
+    entries = _entries((_serve_r().data or {}).get("Config") or {}, _drive_r().data or {})
+    entry = _find(entries, eid)
+    enabled = bool(body.get("enabled"))
+    if entry["kind"] == "taildrive":
+        raise api_error(409, "not_supported", "Taildrive shares are removed, not disabled.")
+    if entry["kind"] == "funnel" and enabled:
+        require_confirm(body)  # re-enabling a public exposure is confirm-tier
+
+    scheme = "https" if entry["tls"] else "http"
+    funnel = entry["kind"] == "funnel"
+    try:
+        if enabled:
+            common.local().serve_add(entry["port"], entry["raw_target"],
+                                     scheme=scheme, funnel=funnel)
+        else:
+            common.local().serve_off(entry["port"], scheme=scheme, funnel=funnel)
+    except Exception as exc:  # noqa: BLE001 — audited boundary (SC-004)
+        audit.insert("exposure.enable" if enabled else "exposure.disable",
+                     "exposures", target=f"port {entry['port']}", outcome="failed",
+                     detail={"error": str(exc)[:300], "id": eid})
+        raise api_error(502, "action_failed", f"tailscaled rejected the change: {exc}") from exc
+    common.local_cache().invalidate("serve")
+    audit.insert("exposure.enable" if enabled else "exposure.disable", "exposures",
+                 target=f"port {entry['port']}", detail={"id": eid, "kind": entry["kind"]})
+    return {"ok": True}
+
+
+@router.delete("/exposures/{eid:path}")
+def delete_exposure(eid: str, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    _blocked()
+    entries = _entries((_serve_r().data or {}).get("Config") or {}, _drive_r().data or {})
+    entry = _find(entries, eid)
+    require_confirm(body)  # removal is confirm-tier too (contract; the UI dialog supplies it)
+    try:
+        if entry["kind"] == "taildrive":
+            common.local().drive_remove(entry["source"])
+        else:
+            common.local().serve_off(entry["port"], scheme="https" if entry["tls"] else "http",
+                                     funnel=entry["kind"] == "funnel")
+    except Exception as exc:  # noqa: BLE001 — audited boundary (SC-004)
+        audit.insert("exposure.delete", "exposures", target=entry["source"],
+                     outcome="failed", detail={"error": str(exc)[:300], "id": eid})
+        raise api_error(502, "action_failed", f"tailscaled rejected the removal: {exc}") from exc
+    common.local_cache().invalidate("serve")
+    common.local_cache().invalidate("drive")
+    audit.insert("exposure.delete", "exposures", target=entry["source"],
+                 detail={"id": eid, "kind": entry["kind"]})
+    return {"ok": True}

@@ -1,0 +1,41 @@
+# vpn-console on the tailscaled host (research D2/D12).
+#
+#   cd deploy && docker compose up -d --build
+#
+# network_mode: host — no port mapping applies; uvicorn binds VPNCONSOLE_PORT
+# directly on the host. Keep that port tailnet-internal (do NOT funnel it;
+# exposing the console publicly is an explicit in-app act, and this is not it).
+name: vpn-console
+
+services:
+  console:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: vpn-console:latest
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      uvicorn server.app:app --host 0.0.0.0 --port ${VPNCONSOLE_PORT:-8090}
+    environment:
+      # Required — compose refuses to start without it (fail loud, not quietly).
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in deploy/.env (or mount ADMIN_PASSWORD_FILE)}
+      # Optional — when set it wins over any token stored via Settings.
+      TS_API_TOKEN: ${TS_API_TOKEN:-}
+      TS_TAILNET: ${TS_TAILNET:--}
+      # Optional — pin session signing across restarts (otherwise regenerated).
+      VPNCONSOLE_SESSION_SECRET: ${VPNCONSOLE_SESSION_SECRET:-}
+      VPNCONSOLE_PORT: ${VPNCONSOLE_PORT:-8090}
+    volumes:
+      # Local tailscaled control (read-write: connect/serve/funnel need it).
+      - /var/run/tailscale/tailscaled.socket:/var/run/tailscale/tailscaled.socket
+      # Host unit control + logs (research D2 — bind mounts, no privileges).
+      - /run/systemd/private:/run/systemd/private
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      # SQLite DB + plain .ovpn store — the only state that must survive.
+      - data:/data
+
+volumes:
+  data:

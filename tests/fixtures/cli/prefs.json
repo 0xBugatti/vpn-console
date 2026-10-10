@@ -1,0 +1,8 @@
+{
+  "RouteAll": true,
+  "AdvertiseRoutes": ["10.20.0.0/16"],
+  "AdvertiseTags": [],
+  "ExitNodeIP": "",
+  "ExitNodeID": "",
+  "AllowExitNodeLANAccess": false
+}

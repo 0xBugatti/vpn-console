@@ -1,0 +1,28 @@
+{
+	// Test tailnet policy — comments must survive the round-trip (research D14).
+	"tagOwners": {
+		"tag:server": ["autogroup:admin"],
+		"tag:ci":     ["tag:server"],
+	},
+
+	"groups": {
+		"group:admins": ["alice@example.com"],
+		"group:devs":   ["alice@example.com", "jonas@example.com"],
+	},
+
+	"hosts": {
+		"build-1": "100.84.12.3",
+		"nas":     "100.84.12.9",
+	},
+
+	"acls": [
+		// devs reach build + nas
+		{"action": "accept", "src": ["group:devs"], "dst": ["build-1:22,443"]},
+		{"action": "accept", "src": ["group:devs"], "dst": ["nas:445"]},
+		// servers may talk to each other
+		{"action": "accept", "src": ["tag:server"], "dst": ["*:*"]},
+	],
+
+	"nodeAttrs": [
+		{"target": ["tag:server"], "attr": ["funnel"]},
+	],}

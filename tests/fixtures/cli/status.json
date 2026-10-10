@@ -1,0 +1,11 @@
+{
+  "Version": "1.86.1-tc88f2a10d",
+  "BackendState": "Running",
+  "TailscaleIPs": ["100.84.12.1", "fd7a:115c:a1e0::1"],
+  "MagicDNSSuffix": "fangorn.example.com",
+  "Self": {
+    "Online": true,
+    "HostName": "build-server",
+    "DNSName": "build-server.fangorn.example.com."
+  }
+}

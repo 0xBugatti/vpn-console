@@ -1,0 +1,9 @@
+{
+  "Version": "1",
+  "Config": {
+    "Shares": {
+      "/photos": { "anonymous": false, "on_public": false, "access": "read" },
+      "/backup": { "anonymous": false, "on_public": false, "access": "rw" }
+    }
+  }
+}
