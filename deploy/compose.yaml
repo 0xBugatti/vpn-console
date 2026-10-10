@@ -15,6 +15,15 @@ services:
     image: vpn-console:latest
     restart: unless-stopped
     network_mode: host
+    # Root on THIS host: tailscaled's localapi 403s non-root peers, and
+    # /run/systemd/private is root-only. For hosts with relaxed socket
+    # perms, drop this line to run as the image's non-root `console` user.
+    user: "0:0"
+    # systemd's PID 1 admits systemctl clients by cgroup membership — a
+    # container cgroup looks foreign and gets ENODATA. pid+cgroup on the
+    # host also gives the listening-ports card real process names.
+    pid: "host"
+    cgroup: host
     command: >
       uvicorn server.app:app --host 0.0.0.0 --port ${VPNCONSOLE_PORT:-8090}
     environment:
@@ -28,10 +37,16 @@ services:
       VPNCONSOLE_PORT: ${VPNCONSOLE_PORT:-8090}
     volumes:
       # Local tailscaled control (read-write: connect/serve/funnel need it).
-      - /var/run/tailscale/tailscaled.socket:/var/run/tailscale/tailscaled.socket
+      # Newer Tailscale units use /run/tailscale/tailscaled.sock — override
+      # TAILSCALE_SOCKET in .env if yours differs from the classic default.
+      - ${TAILSCALE_SOCKET:-/var/run/tailscale/tailscaled.socket}:/var/run/tailscale/tailscaled.socket
       # Host unit control + logs (research D2 — bind mounts, no privileges).
       - /run/systemd/private:/run/systemd/private
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # systemctl's sd_booted() checks this dir; journalctl needs the host
+      # machine-id to find the right journal store.
+      - /run/systemd/system:/run/systemd/system:ro
+      - /etc/machine-id:/etc/machine-id:ro
       - /var/log/journal:/var/log/journal:ro
       - /run/log/journal:/run/log/journal:ro
       # SQLite DB + plain .ovpn store — the only state that must survive.

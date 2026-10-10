@@ -92,6 +92,29 @@ gets you:
   `group_add` first. `docker compose exec console id` and a peek at
   `ls -l /var/run/tailscale/` on the host tell you which case you're in.
 
+- **systemd peer policy (root alone isn't enough on modern systemd ≥ 253)**:
+  PID 1 admits `systemctl` clients by cgroup membership, so a container with
+  its own cgroup namespace gets `Failed to connect to system scope bus …
+  No data available` even as root with `/run/systemd/private` mounted. The
+  fix is in compose.yaml already:
+
+  ```yaml
+      pid: "host"
+      cgroup: host
+  ```
+
+  `pid: host` has a second benefit: the Exposures listening-ports card gets
+  real process names from `ss -tulpen` instead of container-namespace ones.
+  `journalctl` additionally needs `/run/systemd/system` (sd_booted check) and
+  the host's `/etc/machine-id` to find the right journal store — both are
+  mounted in compose.yaml.
+
+- **Modern Tailscale socket path**: newer tailscaled units place the localapi
+  socket at `/run/tailscale/tailscaled.socket` (not the classic
+  `/var/run/tailscale/tailscaled.socket`). Check yours with
+  `ls /run/tailscale/ /var/run/tailscale/` and set `TAILSCALE_SOCKET` in
+  `deploy/.env` if it differs from the default compose expects.
+
 ## The console's own unit: quadlet alternative
 
 compose's `restart: unless-stopped` is enough on Docker hosts. If you manage
@@ -154,6 +177,7 @@ data volume backup like the real secrets it contains.
 | Symptom | Cause / fix |
 |---|---|
 | Local Node / Exposures banner: `unavailable` | tailscaled socket mount missing or permission-denied — see Permissions |
+| Services page: `unavailable` with `No data available` | systemd peer policy — `pid: "host"` + `cgroup: host` missing (see Permissions) |
 | Services page: `unavailable` | `/run/systemd/private` not mounted (or root-only socket → Permissions) |
 | Logs page empty: `journal unavailable` | journal dirs not mounted, or journal GID not granted |
 | Devices/ACL banner: `degraded`/`down` | Tailscale cloud API unreachable or token invalid — Settings → Test connection |

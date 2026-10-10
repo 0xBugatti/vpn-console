@@ -20,13 +20,20 @@ TIMEOUT = 10.0
 class TailscaleCloud:
     def __init__(self, client: httpx.Client, tailnet: str, token: str) -> None:
         self.client = client
-        self.tailnet = tailnet
+        self.tailnet_id = tailnet  # not `tailnet`: that name is the method
         self.token = token
         self.cache = SubsystemCache("tscloud")
 
     # --- transport -------------------------------------------------------
 
     def _headers(self) -> dict[str, str]:
+        # Fail loud (VII): an empty token would otherwise surface as httpx's
+        # cryptic "Illegal header value b'Bearer '" — name the actual fix.
+        if not self.token:
+            raise RuntimeError(
+                "no Tailscale API token configured — add one in Settings "
+                "(or set TS_API_TOKEN in deploy/.env)"
+            )
         return {"Authorization": f"Bearer {self.token}"}
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -56,18 +63,18 @@ class TailscaleCloud:
     # --- cached reads (10 s/60 s TTLs applied by callers via cache) --------
 
     def tailnet(self) -> dict[str, Any]:
-        return self._request("GET", f"/tailnet/{self.tailnet}")
+        return self._request("GET", f"/tailnet/{self.tailnet_id}")
 
     def list_devices(self) -> list[dict[str, Any]]:
-        data = self._request("GET", f"/tailnet/{self.tailnet}/devices")
+        data = self._request("GET", f"/tailnet/{self.tailnet_id}/devices")
         return data.get("devices", [])
 
     def list_users(self) -> list[dict[str, Any]]:
-        data = self._request("GET", f"/tailnet/{self.tailnet}/users")
+        data = self._request("GET", f"/tailnet/{self.tailnet_id}/users")
         return data.get("users", [])
 
     def get_acl_text(self) -> str:
-        data = self._request("GET", f"/tailnet/{self.tailnet}/acl")
+        data = self._request("GET", f"/tailnet/{self.tailnet_id}/acl")
         acl = data.get("acls")
         return acl if isinstance(acl, str) else ""
 
@@ -106,7 +113,7 @@ class TailscaleCloud:
         )
 
     def put_acl_text(self, text: str) -> None:
-        self._request("POST", f"/tailnet/{self.tailnet}/acl", json={"acls": text})
+        self._request("POST", f"/tailnet/{self.tailnet_id}/acl", json={"acls": text})
 
     def create_auth_key(self, reusable: bool = False, expiry_seconds: int = 600,
                         ephemeral: bool = False, tags: list[str] | None = None) -> str:
@@ -114,7 +121,7 @@ class TailscaleCloud:
         if tags:
             capabilities["devices"]["create"]["tags"] = tags
         data = self._request(
-            "POST", f"/tailnet/{self.tailnet}/keys",
+            "POST", f"/tailnet/{self.tailnet_id}/keys",
             json={"expirySeconds": expiry_seconds, "capabilities": capabilities},
         )
         return data.get("key", "")

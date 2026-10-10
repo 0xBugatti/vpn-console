@@ -15,9 +15,10 @@ FROM python:3.12-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg iproute2 systemd \
- && curl -fsSL https://pkgs.tailscale.com/stable/debian/tailscale-archive-keyring.gpg \
+ && CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
+ && curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" \
       -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
- && echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+ && echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian ${CODENAME} main" \
       > /etc/apt/sources.list.d/tailscale.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends tailscale \

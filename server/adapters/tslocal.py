@@ -38,7 +38,10 @@ class TailscaleLocal:
         if not self.socket_path:
             raise FileNotFoundError("tailscaled socket not found")
         payload = b""
-        headers = [f"{method} {path} HTTP/1.1", "Host: localapi", "Connection: close"]
+        # Host MUST be local-tailscaled.sock: modern tailscaled gates localapi
+        # on this dial-name and answers anything else 403 Forbidden.
+        headers = [f"{method} {path} HTTP/1.1",
+                   "Host: local-tailscaled.sock", "Connection: close"]
         if body is not None:
             payload = json.dumps(body).encode()
             headers += ["Content-Type: application/json", f"Content-Length: {len(payload)}"]
