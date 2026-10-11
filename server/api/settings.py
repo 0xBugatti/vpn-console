@@ -87,7 +87,7 @@ def change_password(request: Request, body: dict[str, Any] = Body(...)) -> dict[
         raise api_error(422, "weak_password", "The new password needs at least 8 characters.")
     stored = get_setting("admin_password_hash") or ""
     if not stored or not verify_password(current, stored):
-        raise api_error(401, "bad_password", "Current password is wrong — nothing was changed.")
+        raise api_error(401, "bad_password", "Current password is wrong. Nothing was changed.")
     set_setting("admin_password_hash", hash_password(nxt))
     killed = auth.revoke_all_except(auth.current_session_token(request))
     audit.insert("settings.password", "settings", outcome="ok",
@@ -155,7 +155,7 @@ def reset_policy(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
         "SELECT text FROM policy_versions ORDER BY id DESC LIMIT 1").fetchone()
     if row is None:
         raise api_error(409, "nothing_to_reset",
-                        "No applied policy version is recorded — nothing to reset to.")
+                        "No applied policy version is recorded, so there is nothing to reset to.")
     from . import acl as acl_api  # the draft lives in that module's memory
 
     try:

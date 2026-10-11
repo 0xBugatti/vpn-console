@@ -144,7 +144,7 @@ def update_device(did: str = ..., body: dict = Body(...)) -> dict[str, Any]:
     require_reauth = body.get("require_reauth")
     if tags is None and routes is None and require_reauth is None:
         raise api_error(400, "no_changes",
-                        "Nothing to update — send tags, routes_approved or require_reauth.")
+                        "Nothing to update. Send tags, routes_approved or require_reauth.")
 
     def run() -> None:
         cloud = common.cloud()

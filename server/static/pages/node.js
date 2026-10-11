@@ -29,7 +29,7 @@ export async function renderNode(root) {
 
   <section class="card">
     <h2>Exit node</h2>
-    <p class="hint">An exit node lets tailnet devices route their internet traffic through this host — and lets this host route out through another node.</p>
+    <p class="hint">An exit node lets tailnet devices route their internet traffic through this host. You can also send this host's traffic out through another node.</p>
     <div id="exit-controls"></div>
   </section>
 
@@ -63,7 +63,7 @@ async function loadExitCandidates() {
     const data = await api("/devices");
     EXIT_CANDIDATES = (data.devices || [])
       .filter((r) => r.exit_node && r.online)
-      .map((r) => ({ value: r.addresses[0] || r.name, label: `${r.hostname || r.name} — ${r.addresses[0] || "?"}` }));
+      .map((r) => ({ value: r.addresses[0] || r.name, label: `${r.hostname || r.name} (${r.addresses[0] || "?"})` }));
   } catch { /* tailnet unreachable: the select simply has no peers */ }
   if (NODE) drawExit(NODE);
 }
@@ -89,10 +89,10 @@ function drawActions(d) {
   const host = $("#node-actions", ROOT);
   const bad = NODE._health && NODE._health.state !== "ok";
   if (d.state === "Running") {
-    host.innerHTML = `<button class="btn danger sm" id="node-disconnect" ${bad ? "disabled title=\"Node unreachable — mutations are blocked until it recovers.\"" : ""}>${icon("power", 14)} Disconnect…</button>`;
+    host.innerHTML = `<button class="btn danger sm" id="node-disconnect" ${bad ? "disabled title=\"Node unreachable. Changes are blocked until it recovers.\"" : ""}>${icon("power", 14)} Disconnect…</button>`;
     $("#node-disconnect", host).onclick = openDisconnectDialog;
   } else {
-    host.innerHTML = `<button class="btn primary sm" id="node-connect" ${bad ? "disabled title=\"Node unreachable — mutations are blocked until it recovers.\"" : ""}>${icon("play", 14)} Connect</button>`;
+    host.innerHTML = `<button class="btn primary sm" id="node-connect" ${bad ? "disabled title=\"Node unreachable. Changes are blocked until it recovers.\"" : ""}>${icon("play", 14)} Connect</button>`;
     $("#node-connect", host).onclick = () => post("/node/connect", {}, "tailscaled is connecting…");
   }
 }
@@ -116,7 +116,7 @@ function openDisconnectDialog() {
       <h2>Disconnect this host from Tailscale?</h2>
       <div class="body">
         <p>You will immediately lose access to <strong>${esc(d.hostname || "this host")}</strong>
-        (<span class="mono">${esc(addr)}</span>) over Tailscale — including this console
+        (<span class="mono">${esc(addr)}</span>) over Tailscale, including this console
         if you are connected through the tailnet.</p>
         <p class="form-error">Tailscale does not come back on its own. Someone with LAN or
         physical access must run <span class="mono">tailscale up</span> on the host.</p>
@@ -186,7 +186,7 @@ function drawExit(d) {
       </div>
       <div class="btn-row">
         <select class="input sm" data-use-select aria-label="Exit node selection">
-          <option value="">None — stop using an exit node</option>
+          <option value="">None (stop using an exit node)</option>
           ${options}
         </select>
         <button class="btn ghost sm" data-use-apply>Apply</button>
@@ -248,7 +248,7 @@ function drawRoutes(d) {
 
   $$("[data-approve]", host).forEach((btn) => {
     btn.onclick = async () => {
-      if (!self) { toast("Tailnet view unavailable — approve from the Devices page.", "error"); return; }
+      if (!self) { toast("Tailnet view unavailable. Approve the route from the Devices page.", "error"); return; }
       btn.disabled = true;
       try {
         await api(`/devices/${self.id}`, {
@@ -268,7 +268,7 @@ function drawRoutes(d) {
   $("[data-add-route]", host).onclick = () => {
     const input = $("[data-new-route]", host);
     const cidr = input.value.trim();
-    if (!CIDR_RE.test(cidr)) { toast("Enter a route as a.b.c.d/nn — e.g. 10.30.0.0/24.", "error"); return; }
+    if (!CIDR_RE.test(cidr)) { toast("Enter a route as a.b.c.d/nn, for example 10.30.0.0/24.", "error"); return; }
     input.value = "";
     routeDelta(`+${cidr}`);
   };

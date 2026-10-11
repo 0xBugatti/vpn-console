@@ -27,10 +27,10 @@ export async function renderAudit(root) {
       ${icon("download", 14)} Export JSON</a>
     <button class="btn ghost sm" id="audit-refresh">${icon("refresh", 14)} Refresh</button>
   </div>
-  <p class="page-sub">Every mutation, its outcome, and the undos — newest first. Append-only: nothing here can be edited or removed, including by this console.</p>
+  <p class="page-sub">Every change, its outcome and every undo, newest first. Entries are append-only: nothing here can be edited or removed, not even by this console.</p>
 
   <div class="log-controls">
-    <input class="input sm" id="f-action" placeholder="action — e.g. profile.disable" spellcheck="false">
+    <input class="input sm" id="f-action" placeholder="Action, for example profile.disable" spellcheck="false">
     <select class="input sm" id="f-section">
       ${SECTIONS.map((s) => `<option value="${s}">${s ? s : "All sections"}</option>`).join("")}
     </select>
@@ -109,7 +109,7 @@ async function load(silent) {
   const tbody = $("#audit-table tbody", ROOT);
   if (!data.entries.length && !tbody.children.length) {
     const filtered = Object.keys(filters()).length > 0;
-    tbody.innerHTML = `<tr><td colspan="6" class="faint">No events match${filtered ? " these filters" : " yet — every mutation lands here as it happens"}.</td></tr>
+    tbody.innerHTML = `<tr><td colspan="6" class="faint">No events match${filtered ? " these filters" : " yet. Every change appears here as it happens"}.</td></tr>
       ${filtered ? '<tr><td colspan="6"><button class="btn ghost sm" data-clear-filters>Clear filters</button></td></tr>' : ""}`;
     $("[data-clear-filters]", tbody)?.addEventListener("click", () => {
       $("#f-action", ROOT).value = "";

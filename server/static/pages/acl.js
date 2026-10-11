@@ -20,7 +20,7 @@ export async function renderAcl(root) {
     <button class="btn ghost sm" id="acl-validate">${icon("check", 15)} Validate</button>
     <button class="btn primary sm" id="acl-apply">${icon("check", 15)} Apply…</button>
   </div>
-  <p class="page-sub">The policy file is the source of truth — comments and formatting are preserved exactly.</p>
+  <p class="page-sub">The policy file is the source of truth. Comments and formatting are kept exactly as written.</p>
   <div id="acl-banner"></div>
 
   <div class="acl-grid">
@@ -33,7 +33,7 @@ export async function renderAcl(root) {
 
     <section class="card acl-structured-card">
       <h2>Structured view</h2>
-      <p class="hint small">Generated from the applied file — read-only.</p>
+      <p class="hint small">Generated from the applied file. Read-only.</p>
       <div id="acl-structured"></div>
     </section>
   </div>
@@ -73,7 +73,7 @@ async function load(root) {
   // mutations need a live tailnet — the editor stays open read-only (FR-053)
   const applyBtn = $("#acl-apply", root);
   applyBtn.disabled = down;
-  applyBtn.title = down ? "Tailnet unreachable — applying is blocked until it recovers." : "";
+  applyBtn.title = down ? "Tailnet unreachable. Applying is blocked until it recovers." : "";
   $("#acl-rollback", root).disabled = down;
   $("#acl-text", root).value = data.draft ?? data.applied_text;
   $("#acl-state", root).textContent = data.draft ? "· unsaved draft" : "";
@@ -107,7 +107,7 @@ function drawErrors(root) {
     return;
   }
   host.innerHTML = state.errors.map((e) => `
-    <div class="acl-error">${icon("alert", 14)} <span class="mono">line ${e.line}</span> — ${esc(e.message)}</div>
+    <div class="acl-error">${icon("alert", 14)} <span class="mono">line ${e.line}</span> ${esc(e.message)}</div>
   `).join("");
 }
 
@@ -160,7 +160,7 @@ async function apply(root) {
       body: `<p>This replaces the tailnet policy on Tailscale's servers.</p>
         ${summary.length
           ? `<div class="diff-box">${summary.map((l) => `<div class="mono">${esc(l)}</div>`).join("")}</div>`
-          : '<p class="muted small">No access-rule changes — formatting/comments only.</p>'}
+          : '<p class="muted small">No access-rule changes. Only formatting or comments differ.</p>'}
         <p class="small muted">A one-click rollback stays available afterwards.</p>`,
       confirmLabel: "Apply policy",
       danger: summary.some((l) => l.startsWith("−")),

@@ -55,7 +55,7 @@ export function fmtDate(iso) {
 export function copyText(text, label = "Copied") {
   navigator.clipboard?.writeText(text).then(
     () => toast(`${label}.`, "success"),
-    () => toast("Copy failed — select the text manually.", "error"),
+    () => toast("Copy failed. Select the text and copy it manually.", "error"),
   );
 }
 
@@ -300,7 +300,7 @@ function renderNav() {
     </div>`).join("");
 }
 
-function brandHtml() { return `<span class="mark">${icon("acl", 17)}</span><span>VPN Console</span>`; }
+function brandHtml() { return `<span>VPN Console</span>`; }
 
 function render() {
   clearPageTimers();
@@ -402,7 +402,7 @@ function renderLogin(message = "") {
     } catch (err) {
       btn.disabled = false;
       $("#login-err").textContent = err.code === "rate_limited" || err.message.includes("wait")
-        ? "Too many attempts — wait a minute and try again."
+        ? "Too many attempts. Wait a minute and try again."
         : "Wrong password. Try again.";
     }
   };

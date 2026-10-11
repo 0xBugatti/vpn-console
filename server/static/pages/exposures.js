@@ -20,7 +20,7 @@ export async function renderExposures(root) {
     <button class="btn primary sm" id="exp-add">${icon("plus", 14)} Add serve</button>
     <button class="btn ghost sm" id="exp-refresh">${icon("refresh", 14)} Refresh</button>
   </div>
-  <p class="page-sub">Everything this host serves over Tailscale — and the one place it can reach the public internet.</p>
+  <p class="page-sub">Everything this host serves over Tailscale, including anything reachable from the public internet.</p>
   <div id="exp-banner"></div>
 
   <section class="card">
@@ -72,7 +72,7 @@ function syncTabs() {
     : `${icon("plus", 14)} Add ${TAB}`;
   const down = (DATA?._health?.state ?? "ok") !== "ok";
   add.disabled = down;
-  add.title = down ? "Local node unreachable — mutations are blocked until it recovers." : "";
+  add.title = down ? "Local node unreachable. Changes are blocked until it recovers." : "";
   if (DATA) drawEntries(DATA);
 }
 
@@ -85,8 +85,8 @@ function openAddDialog(preset = "serve") {
         <div class="field">
           <label for="exp-kind">Kind</label>
           <select class="input" id="exp-kind">
-            <option value="serve">Serve — tailnet only</option>
-            <option value="funnel">Funnel — public internet (red)</option>
+            <option value="serve">Serve (tailnet only)</option>
+            <option value="funnel">Funnel (public internet)</option>
           </select>
         </div>
         <div class="field">
@@ -147,8 +147,8 @@ function openAddDialog(preset = "serve") {
         danger: true,
         body: `<p><strong class="mono">${esc(body.target || "(no target yet)")}</strong> will be
           reachable by <strong>anyone on the internet</strong> at port
-          <strong class="mono">${body.port}</strong> — not just your tailnet.</p>
-          <p>Funnel traffic arrives on Tailscale's edge — ports 443, 8443 and 10000 only —
+          <strong class="mono">${body.port}</strong>, not just your tailnet.</p>
+          <p>Funnel traffic arrives on Tailscale's edge on ports 443, 8443 and 10000 only,
           and forwards to this host.</p>`,
         confirmLabel: "Expose publicly",
       });
@@ -252,7 +252,7 @@ async function load(silent) {
 /* ---------- scope badge (FR-052: never color alone — icon + word) ---------- */
 function scopeBadge(scope) {
   if (scope === "public") {
-    return `<span class="scope-badge public">${icon("globe", 12)} Public — Funnel</span>`;
+    return `<span class="scope-badge public">${icon("globe", 12)} Public · Funnel</span>`;
   }
   if (scope === "share") {
     return `<span class="scope-badge share">${icon("lan", 12)} Taildrive</span>`;
@@ -286,7 +286,7 @@ function drawEntries(data) {
   }
   tbody.innerHTML = rows.map((e) => {
     const drive = e.kind === "taildrive";
-    const lock = down ? "disabled title=\"Local node unreachable — mutations are blocked.\"" : "";
+    const lock = down ? "disabled title=\"Local node unreachable. Changes are blocked.\"" : "";
     const toggle = drive
       ? `<button class="btn ghost sm" data-del="${esc(e.id)}" ${lock}>${icon("trash", 13)} Remove</button>`
       : `<label class="boot-toggle" title="${e.enabled ? "Serving" : "Not serving"}">
@@ -384,7 +384,7 @@ function funnelConfirm(entry) {
     danger: true,
     body: `
       <p><strong class="mono">${esc(url)}</strong> will be reachable by
-      <strong>anyone on the internet</strong> — not just your tailnet.</p>
+      <strong>anyone on the internet</strong>, not just your tailnet.</p>
       <p>Funnel traffic arrives on Tailscale's edge for ports
       <strong>443, 8443, 10000</strong> only, and forwards to this host.</p>`,
     confirmLabel: "Expose publicly",
@@ -405,14 +405,14 @@ function drawPorts(data) {
   host.innerHTML = collisions.length
     ? `<div class="attention-item sev-red">${status("err", "Conflict")}
         <span class="msg">Port ${collisions.map((p) => `<strong>${p}</strong>`).join(", ")}
-        is claimed by both a serve and a funnel entry — tailscaled keeps the most
+        is claimed by both a serve and a funnel entry. tailscaled keeps the most
         recent claim. Resolve this or traffic will not behave as shown.</span></div>`
     : "";
 
   const tbody = $("#ports-table tbody", ROOT);
   const ports = data.ports || [];
   if (!ports.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="faint">No listening ports found${data.ports_health?.state !== "ok" ? " — host layer unavailable" : ""}.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="faint">No listening ports found${data.ports_health?.state !== "ok" ? " (host layer unavailable)" : ""}.</td></tr>`;
     return;
   }
   tbody.innerHTML = ports.map((p) => {

@@ -46,7 +46,7 @@ function draw() {
   const down = HEALTH.state !== "ok";
   if (!UNITS.length) {
     host.innerHTML = `<p class="faint">${down
-      ? "Host layer unavailable — no unit list."
+      ? "Host layer unavailable, so there is no unit list."
       : "No managed units on this host."}</p>`;
     return;
   }
@@ -88,8 +88,8 @@ async function act(unit, action, revert) {
   if (action === "stop" || action === "restart") {
     const tailscaled = unit.startsWith("tailscaled");
     const blurb = action === "restart"
-      ? `Restart <strong class="mono">${esc(unit)}</strong> now? Expect a few seconds of downtime${tailscaled ? " — including tailnet connectivity, so this console may blip if you are on it" : ""}.`
-      : `Stop <strong class="mono">${esc(unit)}</strong>? It stays down until someone starts it again${tailscaled ? " — tailnet access to this host ends immediately" : ""}.`;
+      ? `Restart <strong class="mono">${esc(unit)}</strong> now? Expect a few seconds of downtime${tailscaled ? ", including tailnet connectivity. This console may drop briefly if you reach it over Tailscale" : ""}.`
+      : `Stop <strong class="mono">${esc(unit)}</strong>? It stays down until someone starts it again${tailscaled ? ". Tailnet access to this host ends immediately" : ""}.`;
     const ok = await confirmDialog({
       title: `${action[0].toUpperCase() + action.slice(1)} ${unit}?`,
       body: `<p>${blurb}</p>`,
@@ -120,8 +120,8 @@ function followJob(job_id, unit, action) {
     if (!job?.done && tries < 30) return;
     clearInterval(timer);
     if (job?.done && job.ok) toast(`${unit}: ${action} done.`, "success");
-    else if (!job?.done) toast(`${unit}: ${action} is taking a while — check the Logs page.`, "warn");
-    else toast(`${unit}: ${action} failed — ${job.detail || "unknown error"}`, "error");
+    else if (!job?.done) toast(`${unit}: ${action} is taking a while. Check the Logs page.`, "warn");
+    else toast(`${unit}: ${action} failed: ${job.detail || "unknown error"}`, "error");
     load(true);
   });
 }

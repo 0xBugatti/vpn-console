@@ -174,8 +174,6 @@ function drawTiles(tiles, attention, vpn) {
     return hits.some((a) => a.severity === "red") ? "err"
       : hits.length ? "warn" : "";
   };
-  const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
-  const meter = (n, d) => `<div class="meter" aria-hidden="true"><i style="width:${pct(n, d)}%"></i></div>`;
   const of = (n, d) => `${n} <span class="of">/ ${d}</span>`;
   const nodeState = tiles.node.state;
 
@@ -205,9 +203,9 @@ function drawTiles(tiles, attention, vpn) {
       cls: nodeState === "Running" ? "ok" : "err",
       sub: tiles.node.version ? `tailscaled ${tiles.node.version}` : "tailscaled on this host" },
     { icon: "devices", label: "Devices", value: of(tiles.devices.online, tiles.devices.total),
-      cls: sevFor("device."), extra: meter(tiles.devices.online, tiles.devices.total), sub: "online now" },
+      cls: sevFor("device."), sub: "online now" },
     { icon: "profiles", label: "Profiles", value: of(tiles.profiles.enabled, tiles.profiles.total),
-      cls: sevFor("profile."), extra: meter(tiles.profiles.enabled, tiles.profiles.total), sub: "enabled" },
+      cls: sevFor("profile."), sub: "enabled" },
     { icon: "globe", label: "Exposures", value: String(exp.tailnet + exp.public),
       cls: exp.public_alert ? "err" : sevFor("exposure."),
       sub: exp.public ? `${exp.tailnet} tailnet · ${exp.public} public` : `${exp.tailnet} tailnet · nothing public`,
@@ -239,7 +237,7 @@ function drawQuickActions() {
     try {
       const data = await api("/profiles");
       const rows = data.profiles || [];
-      if (!rows.length) { toast("No profiles yet — import one first.", "info"); return; }
+      if (!rows.length) { toast("No profiles yet. Import one first.", "info"); return; }
       location.href = `/api/profiles/${rows[0].id}/download`;
     } catch (err) { toast(errorText(err), "error"); }
   };

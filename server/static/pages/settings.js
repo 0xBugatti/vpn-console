@@ -126,15 +126,15 @@ async function load(silent) {
   $("#set-poll-lists", ROOT).value = s.poll_lists_s;
   $("#ts-current", ROOT).value = s.ts_token || "(none configured)";
   $("#ts-source", ROOT).textContent = s.ts_token_source === "env"
-    ? "The credential comes from the TS_API_TOKEN environment variable. It cannot be edited here — clear the env var to manage it in the app."
+    ? "The credential comes from the TS_API_TOKEN environment variable. It cannot be edited here. Remove the variable to manage the credential in the app."
     : s.ts_token_source === "stored"
       ? "A credential is stored in the console database. It is shown masked and can be replaced but never read back."
-      : "No credential configured — Tailnet pages will report unavailable until one is set.";
+      : "No credential configured. Tailnet pages show as unavailable until you add one.";
   try {
     const list = await api("/profiles");
     PROFILE_COUNT = list.profiles.length;
   } catch { PROFILE_COUNT = 0; }
-  $("#wipe-preview", ROOT).textContent = `Removes all ${PROFILE_COUNT} profile${PROFILE_COUNT === 1 ? "" : "s"} — rows, .ovpn files and every share link. The audit log is kept. This cannot be undone.`;
+  $("#wipe-preview", ROOT).textContent = `Removes all ${PROFILE_COUNT} profile${PROFILE_COUNT === 1 ? "" : "s"}: rows, .ovpn files and every share link. The audit log is kept. This cannot be undone.`;
 }
 
 /* ---------- general ---------- */
@@ -217,7 +217,7 @@ async function testToken() {
   try {
     const r = await api("/settings/test-ts", { method: "POST" });
     if (r.ok) {
-      out.innerHTML = `${status("ok", "Reachable")} Credential works — tailnet
+      out.innerHTML = `${status("ok", "Reachable")} Credential works. Tailnet
         <strong>${esc(r.tailnet)}</strong>, MagicDNS ${r.magic_dns ? "enabled" : "disabled"}
         <span class="faint">(source: ${esc(r.source || "unknown")})</span>.`;
     } else {
@@ -235,7 +235,7 @@ async function wipeProfiles() {
     title: "Wipe the profile store?",
     body: `<p>This permanently removes <strong>all ${PROFILE_COUNT} profile${PROFILE_COUNT === 1 ? "" : "s"}</strong>:</p>
       <ul><li>every .ovpn file stored on this host</li>
-      <li>every share link — distributed URLs stop working immediately</li></ul>
+      <li>every share link (distributed URLs stop working immediately)</li></ul>
       <p>The audit log is kept. <strong>There is no undo.</strong></p>`,
     phrase: "wipe-profiles",
     confirmLabel: "Wipe everything",

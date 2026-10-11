@@ -70,7 +70,7 @@ async function loadUnits() {
   UNITS = data.units || [];
   const sel = $("#log-unit", ROOT);
   sel.innerHTML = UNITS.map((u) => `<option value="${esc(u)}">${esc(u)}</option>`).join("")
-    || `<option value="">— no units —</option>`;
+    || `<option value="">No units</option>`;
   UNIT = UNITS[0] || "";
   sel.value = UNIT;
   if (!UNITS.length) {
@@ -126,7 +126,7 @@ function drawLog(data) {
   const host = $("#log-lines", ROOT);
   if (!LINES.length) {
     const filtered = $("#log-sev", ROOT)?.value || $("#log-q", ROOT)?.value;
-    host.innerHTML = `<p class="faint">No entries match${data._health?.state !== "ok" ? " — journal unavailable" : filtered ? " these filters" : " for this unit yet"}.</p>
+    host.innerHTML = `<p class="faint">No entries match${data._health?.state !== "ok" ? " (journal unavailable)" : filtered ? " these filters" : " for this unit yet"}.</p>
       ${filtered && data._health?.state === "ok" ? '<button class="btn ghost sm" data-log-clear>Clear filters</button>' : ""}`;
     $("[data-log-clear]", host)?.addEventListener("click", () => {
       const sev = $("#log-sev", ROOT);

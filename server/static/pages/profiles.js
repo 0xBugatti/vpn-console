@@ -20,11 +20,11 @@ export async function renderProfiles(root) {
     <button class="btn ghost sm" id="scan-btn">${icon("search", 15)} Scan system</button>
     <button class="btn primary sm" id="import-btn">${icon("upload", 15)} Import</button>
   </div>
-  <p class="page-sub">OpenVPN client profiles. Status comes from the embedded certificate — expired profiles are flagged before your users hit them.</p>
+  <p class="page-sub">OpenVPN client profiles. Status comes from the embedded certificate, so expiring profiles are flagged before anyone is locked out.</p>
 
   <div class="card" id="import-zone">
     <div class="dropzone" id="dropzone" tabindex="0" role="button"
-         aria-label="Import .ovpn files — drop them here or click to browse">
+         aria-label="Import .ovpn files: drop them here or click to browse">
       ${icon("upload", 20)}
       <div><strong>Drop .ovpn files here</strong> or click to browse</div>
       <div class="muted small">Multiple files welcome · parsed locally · 1 MiB per file</div>
@@ -35,7 +35,7 @@ export async function renderProfiles(root) {
 
   <div class="filterbar">
     <label class="search">${icon("search", 15)}
-      <input id="profile-q" placeholder='Filter — try tag:office status:expired cipher:AES-256-GCM' value="${esc(state.q)}">
+      <input id="profile-q" placeholder='Filter, for example tag:office status:expired cipher:AES-256-GCM' value="${esc(state.q)}">
     </label>
   </div>
   <div class="active-filters" id="active-filters"></div>
@@ -120,7 +120,7 @@ function drawRows(root) {
     empty.hidden = false;
     empty.innerHTML = state.q
       ? `<p>No profiles match this filter.</p><button class="btn ghost sm" id="clear-q">Clear filter</button>`
-      : `<p>No profiles yet — import your .ovpn files to get started.</p><button class="btn primary sm" id="empty-import">${icon("upload", 14)} Import profiles</button>`;
+      : `<p>No profiles yet. Import your .ovpn files, or scan this server for existing ones.</p><button class="btn primary sm" id="empty-import">${icon("upload", 14)} Import profiles</button>`;
     if (state.q) $("#clear-q", empty).onclick = () => { state.q = ""; load(root); };
     else $("#empty-import", empty).onclick = () => $("#file-input", root).click();
   } else {
@@ -193,7 +193,7 @@ async function importFiles(files) {
   const chipsBox = $("#import-chips");
   chipsBox.hidden = false;
   chipsBox.innerHTML = files.map((f) =>
-    `<span class="import-chip pending" data-name="${esc(f.name)}">${icon("refresh", 13)} ${esc(f.name)} — uploading…</span>`
+    `<span class="import-chip pending" data-name="${esc(f.name)}">${icon("refresh", 13)} ${esc(f.name)}: uploading…</span>`
   ).join("");
 
   for (const file of files) {
@@ -209,7 +209,7 @@ async function importFiles(files) {
       drawImportChip(chipsBox, chip, body);
     } catch (err) {
       chip.className = "import-chip error";
-      chip.innerHTML = `${icon("x", 13)} ${esc(file.name)} — ${esc(errorText(err))}`;
+      chip.innerHTML = `${icon("x", 13)} ${esc(file.name)}: ${esc(errorText(err))}`;
     }
   }
   await load(document.getElementById("page"));
@@ -219,10 +219,10 @@ function drawImportChip(chipsBox, chip, body) {
   if (!body) { chip.className = "import-chip error"; chip.innerHTML = `${icon("x", 13)} upload failed`; return; }
   if (body.status === "error") {
     chip.className = "import-chip error";
-    chip.innerHTML = `${icon("x", 13)} ${esc(body.name)} — ${esc(body.message || "rejected")}`;
+    chip.innerHTML = `${icon("x", 13)} ${esc(body.name)}: ${esc(body.message || "rejected")}`;
   } else if (body.status === "duplicate") {
     chip.className = "import-chip dup";
-    chip.innerHTML = `${icon("copy", 13)} ${esc(body.name)} — already exists
+    chip.innerHTML = `${icon("copy", 13)} ${esc(body.name)}: already exists
       <span class="muted small">same content</span>
       <button class="btn sm" data-res="replace">Replace</button>
       <button class="btn ghost sm" data-res="keep">Keep both</button>`;
@@ -230,10 +230,10 @@ function drawImportChip(chipsBox, chip, body) {
     chip.querySelector('[data-res="keep"]').onclick = () => resolveDuplicate(chip, body, "keep_both");
   } else if (body.parse_error) {
     chip.className = "import-chip warn";
-    chip.innerHTML = `${icon("alert", 13)} ${esc(body.name)} — imported, but ${esc(body.parse_error)}`;
+    chip.innerHTML = `${icon("alert", 13)} ${esc(body.name)}: imported, but ${esc(body.parse_error)}`;
   } else {
     chip.className = "import-chip ok";
-    chip.innerHTML = `${icon("check", 13)} ${esc(body.name)} — parsed`;
+    chip.innerHTML = `${icon("check", 13)} ${esc(body.name)}: parsed`;
   }
 }
 
@@ -244,11 +244,11 @@ async function resolveDuplicate(chip, body, action) {
       body: { stash: body.stash, action, target: action === "replace" ? body.duplicate_of : undefined },
     });
     chip.className = "import-chip ok";
-    chip.innerHTML = `${icon("check", 13)} ${esc(body.name)} — ${action === "replace" ? "replaced existing" : "kept both"}`;
+    chip.innerHTML = `${icon("check", 13)} ${esc(body.name)}: ${action === "replace" ? "replaced existing" : "kept both"}`;
     await load(document.getElementById("page"));
   } catch (err) {
     chip.className = "import-chip error";
-    chip.innerHTML = `${icon("x", 13)} ${esc(body.name)} — ${esc(errorText(err))}`;
+    chip.innerHTML = `${icon("x", 13)} ${esc(body.name)}: ${esc(errorText(err))}`;
   }
 }
 
@@ -514,7 +514,7 @@ export async function openProfilesDrawer(root, pid) {
         method: "PATCH", body: { config_text: config.value },
       });
       p = { ...p, ...data.profile };
-      undoable("Config saved — previous version kept.", data.undo_token);
+      undoable("Config saved. The previous version is kept.", data.undo_token);
       $("[data-revert]", drawer)?.remove();
       const footerBtns = $(".btn-row", drawer);
       if (!footerBtns.querySelector("[data-revert]")) {
@@ -606,7 +606,7 @@ export function openQrModal(pid) {
         <button class="btn ghost sm" data-mode="url">URL</button>
         <button class="btn ghost sm" data-mode="embed">Embed config</button>
       </div>
-      <p class="muted small">URL mode encodes a share link. Embed mode puts the whole config in the code — use only on large screens.</p>
+      <p class="muted small">URL mode encodes a share link. Embed mode puts the whole config in the code, so scan it from a large screen.</p>
       <div class="btn-row"><button class="btn ghost" data-close>Close</button></div>
     </div>
   </div>`);

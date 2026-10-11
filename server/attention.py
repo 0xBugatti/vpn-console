@@ -101,7 +101,7 @@ def _node_items(local_status: dict | None) -> list[dict]:
     host = (local_status.get("Self") or {}).get("HostName") or "This server"
     return [_item(
         "red", "node.down",
-        f"Tailscale is {local_status.get('BackendState') or 'down'} on {host} — the node is off the tailnet.",
+        f"Tailscale is {local_status.get('BackendState') or 'down'} on {host}. The node is off the tailnet.",
         "#/node", host, {"label": "Open Local Node", "href": "#/node", "method": "GET"},
     )]
 

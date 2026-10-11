@@ -175,7 +175,7 @@ def import_system_profile(body: dict[str, Any]) -> dict[str, Any]:
     try:
         resolved = Path(raw_path).resolve(strict=True)
     except OSError:
-        raise api_error(404, "not_found", "File not found — rescan and try again.") from None
+        raise api_error(404, "not_found", "File not found. Rescan and try again.") from None
     allowed = any(
         resolved.is_relative_to(Path(root.strip()).resolve())
         for root in CONFIG.scan_dirs.split(",") if root.strip()

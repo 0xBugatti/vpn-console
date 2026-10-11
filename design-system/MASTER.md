@@ -1,7 +1,9 @@
 # vpn-console Design System — MASTER
 
-**Direction**: D · Topology, orange accent
-**Status**: Ratified 2026-10-11 by owner pick (replaces 12 · Quiet Cloud HQ, ratified 2026-10-10)
+**Direction**: D · Topology, orange accent, quiet pass (anti-slop)
+**Status**: Ratified 2026-10-11 by owner pick (replaces 12 · Quiet Cloud HQ, ratified 2026-10-10).
+Quiet pass the same day: owner found the orange logo mark and glows "too vibey" and asked to
+apply `miqdadbadjuber/anti-slop` + `Leonxlnx/taste-skill` (installed in `.claude/skills/`).
 **Source**: restyle comparison (directions A Signal · B Fieldnote · C Rack · D Topology); owner chose D with orange in place of cobalt
 **Implementation**: `server/static/styles.css` (tokens are binding) · UX rules: `../research/vpn-dashboard-ux.md`
 
@@ -12,10 +14,27 @@ Every screen MUST conform to this file. Deviations require an override file in
 
 ## 1. Design thesis
 
-Airy and modern: white panels with soft shadows on a cool off-white ground, generous
-radii, one orange accent. The orange marks *where you are and what you can do* (active
-nav, primary buttons, focus, meters, the network-path wires). Semantic color marks *state*
-and is never the accent. Dark mode is the same design re-stepped, not inverted.
+Quiet and modern: flat white panels with hairline borders on a cool off-white ground.
+One burnt-orange accent, used only where it means "act here": primary buttons, links,
+keyboard focus, toggles and checkboxes. Everything else is ink and gray. Semantic color
+marks *state* and is never the accent. Dark mode is the same design re-stepped.
+
+### Anti-slop rules (binding)
+
+- **No glow**: no colored outer shadows on buttons, dots, nodes or icons; no radial orbs.
+- **No invented logo**: the brand is the plain wordmark "VPN Console". The favicon is a
+  neutral ink tile with a "V", only so the browser tab is identifiable.
+- **Shadow only for things that float** (dialogs, drawers, toasts, ⌘K palette). Panels
+  and tiles sit on the page: border only.
+- **Accent is scarce**: never on nav state, meters, wires, counts or hover fills. Active
+  nav = neutral fill + ink text.
+- **Sentence case** labels; no uppercase tracked eyebrows.
+- **Status tags are square** (4px radius), no capsule + dot + tint stacks.
+- **Copy**: no em dashes in UI text; plain, specific sentences. "—" survives only as the
+  empty-cell placeholder in tables.
+- **Fonts, with reasons**: Schibsted Grotesk for UI (legible, has character without
+  being the default); JetBrains Mono only for machine values (IPs, versions, unit
+  names, audit actions) where tabular, unambiguous glyphs matter.
 
 ## 2. Tokens
 
@@ -29,9 +48,9 @@ and is never the accent. Dark mode is the same design re-stepped, not inverted.
 | `--surface-3` | `#E9EDF2` | segmented-tab track, meter track |
 | `--border` / `--border-strong` | `#E4E7EC` / `#D0D5DD` | separators / inputs |
 | `--text` / `--muted` / `--faint` | `#101828` / `#475467` / `#667085` | ink levels (all ≥4.5:1 on white) |
-| `--accent` | `#EA580C` | marks: active icons, focus ring, meters, wires |
+| `--accent` | `#EA580C` | focus outline, toggles, checkboxes |
 | `--accent-strong` | `#CC4A0C` | primary button fill + link text (white text ≥4.5:1) |
-| `--accent-soft` | `#FFF1E8` | active nav background, selected rows |
+| `--accent-soft` | `#FDF1EA` | rarely: selected states only |
 | ok / warn / err / info | `#12A150` / `#D4A20B` / `#E5484D` / `#2E6FD8` | dots, bars |
 | `*-text` variants | `#0E7A3D` / `#8A6800` / `#C4232F` / `#2559B0` | semantic text on light |
 
@@ -46,18 +65,19 @@ text uses `--accent-ink #1A0B02`), semantics re-stepped brighter. Applied both u
 
 ### Shape and type
 
-- Radii: card 16px · item/input 10px · pill 999px. Controls are 38px tall (`.sm` 32px).
-- Shadow: `--shadow-card` on cards/tiles; `--shadow-overlay` on dialogs, drawers, toasts.
+- Radii: card 12px · item/input/button 8px · tags 4px. Controls are 38px tall (`.sm` 32px).
+- Shadow: `--shadow-card` is `none`; `--shadow-overlay` only on dialogs, drawers, toasts, palette.
 - Type: **Schibsted Grotesk** (UI + display), **JetBrains Mono** (addresses, units, versions,
   audit actions). Both vendored in `server/static/fonts/` — no runtime font CDN.
-- Scale: h1 26 · h2 15 · body 14 · labels/meta 12.5 · eyebrow 10.5 uppercase +0.09em.
+- Scale: h1 26 · h2 15 · body 14 · labels/meta 12.5 · group labels 12 (sentence case).
 
 ## 3. Layout rules
 
 - Sidebar grouped by domain: Overview · **OpenVPN** · **Tailnet** · **This host** · **Admin**.
 - Top bar: page name · search (⌘K) · subsystem health as dot + label (dots only on phones).
-- Overview order: Network path (public → host → Tailscale / OpenVPN tunnels) → five stat
-  tiles (equal height, values never wrap) → Needs attention | Recent activity.
+- Overview order: Network path (public → host → Tailscale / OpenVPN tunnels; neutral 1px
+  wires, host marked by an ink border) → five stat tiles (equal height, values never wrap,
+  no progress meters) → Needs attention | Recent activity.
 - Grids collapse: 5 tiles → 3 (≤1240px) → 2 (≤900px) → 1 (≤340px); splits stack ≤1080px;
   sidebar becomes an off-canvas drawer ≤900px. No horizontal page scroll at any width;
   wide tables scroll inside their own wrapper.

@@ -42,7 +42,7 @@ def put_draft(body: dict = Body(...)) -> dict[str, Any]:
     global _draft
     text = str(body.get("text") or "")
     if not text.strip():
-        raise api_error(422, "empty_draft", "Draft is empty — nothing to validate.")
+        raise api_error(422, "empty_draft", "The draft is empty, so there is nothing to validate.")
     errors = acl.validate(text)
     _draft = text  # keep the editor's text even when invalid
     return {"valid": not errors, "errors": errors}
@@ -61,12 +61,12 @@ def apply_draft(body: dict = Body(default={})) -> dict[str, Any]:
     global _draft, _rollback_text
     require_confirm(body)
     if _draft is None:
-        raise api_error(409, "no_draft", "No draft to apply — edit the policy first.")
+        raise api_error(409, "no_draft", "No draft to apply. Edit the policy first.")
 
     errors = acl.validate(_draft)
     if errors:
         raise api_error(409, "validation_failed",
-                        "The draft has errors — fix them before applying.",
+                        "The draft has errors. Fix them before applying.",
                         errors=errors)
 
     applied, health = _applied()
@@ -97,7 +97,7 @@ def rollback() -> dict[str, Any]:
     global _rollback_text
     if _rollback_text is None:
         raise api_error(409, "nothing_pinned",
-                        "No previous policy pinned — rollback is available right after an apply.")
+                        "No previous policy is pinned. Rollback becomes available right after an apply.")
     text, pinned = _rollback_text, None
     _rollback_text = None
     try:

@@ -20,7 +20,7 @@ export async function renderDevices(root) {
     <h1>Devices</h1>
     <button class="btn ghost sm" id="dev-refresh">${icon("refresh", 15)} Refresh</button>
   </div>
-  <p class="page-sub">Every machine in your tailnet — user devices and servers. Click a row for detail.</p>
+  <p class="page-sub">Every machine in your tailnet, both user devices and servers. Click a row for details.</p>
 
   <div class="tabs" id="dev-tabs">
     <button class="tab" data-tab="all">All</button>
@@ -30,7 +30,7 @@ export async function renderDevices(root) {
 
   <div class="filterbar">
     <label class="search">${icon("search", 15)}
-      <input id="dev-q" placeholder='Filter — try is:unapproved tag:server !os:ios' value="${esc(state.q)}">
+      <input id="dev-q" placeholder='Filter, for example is:unapproved tag:server !os:ios' value="${esc(state.q)}">
     </label>
   </div>
   <div class="active-filters" id="dev-active"></div>
@@ -113,7 +113,7 @@ function drawRows(root) {
     empty.innerHTML = state.q
       ? `<p>No devices match this filter.</p><button class="btn ghost sm" id="dev-clear-q">Clear filter</button>`
       : (state.health?.state !== "ok"
-        ? `<p>No devices to show — ${esc(state.health?.detail || "the tailnet is unreachable")}.</p>`
+        ? `<p>No devices to show: ${esc(state.health?.detail || "the tailnet is unreachable")}.</p>`
         : `<p>No devices to show. Craft a connect command for your first device.</p><button class="btn primary sm" id="dev-first">Connect a device</button>`);
     if (state.q) $("#dev-clear-q", empty).onclick = () => { state.q = ""; load(root); };
     else $("#dev-first", empty)?.addEventListener("click", () => { location.hash = "#/overview"; });
@@ -173,7 +173,7 @@ export async function openDevicesDrawer(root, did) {
         <dt>OS · version</dt><dd>${esc(d.os_label)} · ${esc(d.version)}${d.version_stale ? ' <span class="badge warn">outdated</span>' : ""}${d.client_version && d.client_version !== d.version ? ` <span class="faint small">(client ${esc(d.client_version)})</span>` : ""}</dd>
         <dt>Tags</dt><dd class="kv-tags">${d.tags.length ? d.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join(" ") : "—"}</dd>
         <dt>Key expiry</dt><dd>${d.key_expiry_state === "never"
-          ? "Never — rekeying is disabled"
+          ? "Never (rekeying is disabled)"
           : `${fmtDate(d.key_expiry)} <span class="faint">(${relTime(d.key_expiry)})</span>`}</dd>
         <dt>Last seen</dt><dd>${fmtDate(d.last_seen)} <span class="faint">(${relTime(d.last_seen)})</span></dd>
         <dt>Exit node</dt><dd>${d.exit_node ? "Yes" : d.advertised_exit ? "Advertised, not approved" : "No"}</dd>
@@ -203,7 +203,7 @@ function buildDeviceActions(host, root, close, first) {
     const reauth = !d.expiry_disabled; // "Require periodic re-authentication"
     const name = d.hostname || d.name;
     const down = state.health && state.health.state !== "ok";
-    const lock = down ? "disabled title=\"Tailnet unreachable — mutations are blocked until it recovers.\"" : "";
+    const lock = down ? "disabled title=\"Tailnet unreachable. Changes are blocked until it recovers.\"" : "";
 
     host.innerHTML = `
     ${needsApproval ? `
@@ -239,7 +239,7 @@ function buildDeviceActions(host, root, close, first) {
       </label>
       <p class="hint small">${reauth && d.key_expiry
         ? `Key expires ${fmtDate(d.key_expiry)} <span class="faint">(${relTime(d.key_expiry)})</span>.`
-        : "Key never expires — the device stays trusted until removed."}</p>
+        : "Key never expires. The device stays trusted until you remove it."}</p>
       <button class="btn ghost sm" data-act="expire" ${lock}>${icon("key", 15)} Expire key now</button>
       <p class="hint small">Disconnects this device until its owner re-authenticates.</p>
     </section>
@@ -282,7 +282,7 @@ function buildDeviceActions(host, root, close, first) {
       if (!yes) return;
       await busy(e.currentTarget, async () => {
         await api(`/devices/${d.id}/expire-key`, { method: "POST", body: { confirm: true } });
-        await refresh(`Key expired for ${name} — it is now disconnected.`);
+        await refresh(`Key expired for ${name}. It is now disconnected.`);
       });
     });
 
