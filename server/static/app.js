@@ -60,8 +60,13 @@ export function copyText(text, label = "Copied") {
 }
 
 /* ---------- api client ---------- */
+// Mount-prefix aware: resolves against wherever this module was actually
+// loaded from, so the SPA works unmodified whether served at domain root
+// (direct :8091 access) or reverse-proxied under a sub-path like /vpn/.
+export const BASE = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+
 export async function api(path, opts = {}) {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${BASE}/api${path}`, {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
     body: opts.body !== undefined ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,

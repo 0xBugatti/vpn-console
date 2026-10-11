@@ -1,6 +1,6 @@
 /* Logs page (US9, FR-048): per-unit journal viewer — severity filter, text
    search, live follow via cursor polling (research D13), download. */
-import { api, toast, errorText, esc, $, healthBanner, icon, every } from "../app.js";
+import { api, toast, errorText, esc, $, healthBanner, icon, every, BASE } from "../app.js";
 
 const PRIO_KIND = { 0: "err", 1: "err", 2: "err", 3: "err", 4: "warn", 5: "warn" };
 
@@ -55,7 +55,7 @@ export async function renderLogs(root) {
     const q = $("#log-q", root).value;
     if (sev) params.set("severity", sev);
     if (q) params.set("q", q);
-    location.href = `/api/logs/${encodeURIComponent(UNIT)}/download?${params}`;
+    location.href = `${BASE}/api/logs/${encodeURIComponent(UNIT)}/download?${params}`;
   };
 
   await loadUnits();

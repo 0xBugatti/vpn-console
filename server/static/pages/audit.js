@@ -2,7 +2,7 @@
    export. Read-only by design — no edit/delete affordances anywhere; the
    table's append-only guarantee is the point, not a limitation to hide. */
 import {
-  api, toast, errorText, esc, $, status, icon, every,
+  api, toast, errorText, esc, $, status, icon, every, BASE,
 } from "../app.js";
 
 const SECTIONS = ["", "profiles", "devices", "acl", "node", "exposures",
@@ -23,7 +23,7 @@ export async function renderAudit(root) {
   root.innerHTML = `
   <div class="page-head">
     <h1>Audit Log</h1>
-    <a class="btn ghost sm" id="audit-export" href="/api/audit/export">
+    <a class="btn ghost sm" id="audit-export" href="${BASE}/api/audit/export">
       ${icon("download", 14)} Export JSON</a>
     <button class="btn ghost sm" id="audit-refresh">${icon("refresh", 14)} Refresh</button>
   </div>
@@ -126,7 +126,7 @@ async function load(silent) {
   $("#audit-more", ROOT).hidden = !data.next_cursor;
   // export always reflects the current filters — never a cursor position
   const exportQs = qs();
-  $("#audit-export", ROOT).href = `/api/audit/export${exportQs ? `?${exportQs}` : ""}`;
+  $("#audit-export", ROOT).href = `${BASE}/api/audit/export${exportQs ? `?${exportQs}` : ""}`;
 }
 
 function rowHtml(e) {

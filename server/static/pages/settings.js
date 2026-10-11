@@ -4,7 +4,7 @@
    here only ever writes, never displays. */
 import {
   api, toast, errorText, esc, $, $$, status, icon, typeConfirmDialog, applyTheme,
-  confirmDialog, copyText,
+  confirmDialog, copyText, BASE,
 } from "../app.js";
 
 let ROOT = null;
@@ -326,9 +326,9 @@ async function createLoginLink() {
   if (!ok) return;
   try {
     const r = await api("/settings/login-link", { method: "POST", body: { confirm: true } });
-    // Build the URL from this page's own origin: behind a tunnel or proxy that is
-    // the address you actually reach the console on.
-    $("#ll-url", ROOT).value = `${location.origin}/login?token=${r.token}`;
+    // Build the URL from this page's own origin and mount prefix: behind a
+    // tunnel or proxy, that is the address you actually reach the console on.
+    $("#ll-url", ROOT).value = `${location.origin}${BASE}/login?token=${r.token}`;
     $("#ll-reveal", ROOT).hidden = false;
     drawLoginLink(r);
     toast(replacing ? "Login link replaced." : "Login link created.", "success");

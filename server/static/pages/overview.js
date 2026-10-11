@@ -2,7 +2,7 @@
    recent activity. Answers "is anything wrong?" in one glance (FR-030..032). */
 import {
   api, toast, errorText, esc, h, $, $$, status, relTime, fmtDate,
-  healthBanner, icon, copyText, every,
+  healthBanner, icon, copyText, every, BASE,
 } from "../app.js";
 
 const SEV = { red: ["err", "Broken"], amber: ["warn", "Due"] };
@@ -238,7 +238,7 @@ function drawQuickActions() {
       const data = await api("/profiles");
       const rows = data.profiles || [];
       if (!rows.length) { toast("No profiles yet. Import one first.", "info"); return; }
-      location.href = `/api/profiles/${rows[0].id}/download`;
+      location.href = `${BASE}/api/profiles/${rows[0].id}/download`;
     } catch (err) { toast(errorText(err), "error"); }
   };
 }

@@ -2,7 +2,7 @@
    filterable table, detail drawer with raw editor / revert / undo tier. */
 import {
   api, toast, errorText, esc, h, $, $$, status, relTime, fmtDate,
-  confirmDialog, typeConfirmDialog, icon, copyText,
+  confirmDialog, typeConfirmDialog, icon, copyText, BASE,
 } from "../app.js";
 
 const STATUS_KIND = {
@@ -158,7 +158,7 @@ function drawRows(root) {
     if (!tr) return;
     const p = state.rows.find((r) => r.id === tr.dataset.id);
     const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "download") { window.location.href = `/api/profiles/${p.id}/download`; return; }
+    if (act === "download") { window.location.href = `${BASE}/api/profiles/${p.id}/download`; return; }
     if (act === "qr") { openQrModal(p.id); return; }
     if (act === "toggle") return void toggleProfile(root, p);
     if (act === "delete") return void deleteProfile(root, p);
@@ -201,7 +201,7 @@ async function importFiles(files) {
     try {
       const fd = new FormData();
       fd.append("files", file, file.name);
-      const res = await fetch("/api/profiles/import", {
+      const res = await fetch(`${BASE}/api/profiles/import`, {
         method: "POST", body: fd, credentials: "same-origin",
       });
       if (res.status === 401) { location.hash = "#/login"; return; }
@@ -467,7 +467,7 @@ export async function openProfilesDrawer(root, pid) {
       </div>
     </div>
     <footer class="btn-row" style="padding:12px 18px;border-top:1px solid var(--border)">
-      <a class="btn ghost sm" href="/api/profiles/${p.id}/download" download="${esc(p.name)}.ovpn">${icon("download", 14)} Download</a>
+      <a class="btn ghost sm" href="${BASE}/api/profiles/${p.id}/download" download="${esc(p.name)}.ovpn">${icon("download", 14)} Download</a>
       <button class="btn sm" data-toggle>${p.enabled ? `${icon("pause", 14)} Disable` : `${icon("play", 14)} Enable`}</button>
       <div style="flex:1"></div>
       <button class="btn danger sm" data-delete>${icon("trash", 14)} Delete</button>
@@ -564,7 +564,7 @@ export async function openProfilesDrawer(root, pid) {
         </div>`).join("")
         : `<p class="faint small" style="margin:4px 0">No links yet.</p>`;
       $$("[data-copy-link]", shareList).forEach((b) => {
-        b.onclick = () => copyText(`${location.origin}${b.dataset.copyLink}`, "Link copied");
+        b.onclick = () => copyText(`${location.origin}${BASE}${b.dataset.copyLink}`, "Link copied");
       });
       $$("[data-revoke]", shareList).forEach((b) => {
         b.onclick = async () => {
@@ -588,7 +588,7 @@ export async function openProfilesDrawer(root, pid) {
           one_time: $("[data-share-onetime]", drawer).checked,
         },
       });
-      await copyText(`${location.origin}${link.url}`, "Link created and copied");
+      await copyText(`${location.origin}${BASE}${link.url}`, "Link created and copied");
       drawShares();
     } catch (err) { toast(errorText(err), "error"); }
   };
@@ -601,7 +601,7 @@ export function openQrModal(pid) {
   const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
     <div class="dialog" style="text-align:center">
       <h2>Scan to download</h2>
-      <div class="qr-box"><img alt="Profile QR code" src="/api/profiles/${pid}/qr"></div>
+      <div class="qr-box"><img alt="Profile QR code" src="${BASE}/api/profiles/${pid}/qr"></div>
       <div class="btn-row" style="justify-content:center">
         <button class="btn ghost sm" data-mode="url">URL</button>
         <button class="btn ghost sm" data-mode="embed">Embed config</button>
@@ -613,7 +613,7 @@ export function openQrModal(pid) {
   document.body.appendChild(scrim);
   const img = $("img", scrim);
   $$("[data-mode]", scrim).forEach((b) => {
-    b.onclick = () => { img.src = `/api/profiles/${pid}/qr?mode=${b.dataset.mode}`; };
+    b.onclick = () => { img.src = `${BASE}/api/profiles/${pid}/qr?mode=${b.dataset.mode}`; };
   });
   $("[data-close]", scrim).onclick = () => scrim.remove();
   scrim.onclick = (e) => { if (e.target === scrim) scrim.remove(); };

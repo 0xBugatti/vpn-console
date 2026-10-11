@@ -74,22 +74,28 @@ _NO_LEAK = {
 }
 
 
+def _prefix(request: Request) -> str:
+    """Mount prefix set by the reverse proxy (e.g. "/vpn"), empty for direct access."""
+    return request.headers.get("x-forwarded-prefix", "").rstrip("/")
+
+
 def _link_login(request: Request, token: str) -> RedirectResponse:
     ip = request.client.host if request.client else "unknown"
+    prefix = _prefix(request)
     try:
         auth.login_limiter.check(ip)
     except HTTPException:
         audit.insert("auth.login", "auth", target=ip, outcome="failed",
                      detail={"method": "login_link", "reason": "rate limited"})
-        return RedirectResponse("/#/login", status_code=303, headers=_NO_LEAK)
+        return RedirectResponse(f"{prefix}/#/login", status_code=303, headers=_NO_LEAK)
     if not loginlink.verify(token):
         auth.login_limiter.record_failure(ip)
         audit.insert("auth.login", "auth", target=ip, outcome="failed",
                      detail={"method": "login_link", "reason": "invalid token"})
-        return RedirectResponse("/#/login", status_code=303, headers=_NO_LEAK)
+        return RedirectResponse(f"{prefix}/#/login", status_code=303, headers=_NO_LEAK)
     auth.login_limiter.reset(ip)
     # Redirect to a clean URL so the token leaves the address bar and history.
-    response = RedirectResponse("/#/overview", status_code=303, headers=_NO_LEAK)
+    response = RedirectResponse(f"{prefix}/#/overview", status_code=303, headers=_NO_LEAK)
     auth.set_session_cookie(response, auth.make_token())
     audit.insert("auth.login", "auth", target=ip, outcome="ok", detail={"method": "login_link"})
     return response
