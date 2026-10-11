@@ -109,8 +109,8 @@ def _vpn_services(services: list[dict], profile_rows: list[dict]) -> dict[str, A
     }
 
 
-def _server_ips(local: dict | None) -> dict[str, str]:
-    """Public IPv4 + Tailscale IPv4 (network_mode: host → host's own view)."""
+def _server_ips(local: dict | None, tunnels: list[dict] | None = None) -> dict[str, Any]:
+    """Public IPv4 + Tailscale IPv4 + OpenVPN tunnel IPv4s (host's own view)."""
     public = ""
     try:
         # UDP connect picks the default-route source address without
@@ -125,7 +125,16 @@ def _server_ips(local: dict | None) -> dict[str, str]:
         if "." in ip:  # v4 first for display; v6 stays on the Node page
             tailscale = ip
             break
-    return {"public": public, "tailscale": tailscale}
+    return {
+        "public": public,
+        "tailscale": tailscale,
+        "openvpn": [{"iface": t["iface"], "addr": t["addr"]} for t in tunnels or []],
+    }
+
+
+def _tunnel_rows() -> list[dict]:
+    result = common.host_get("interfaces", 10.0, common.host().interfaces)
+    return result.data if result.health.state == "ok" else []
 
 
 @router.get("/health")
@@ -169,7 +178,7 @@ def overview() -> dict[str, Any]:
             "services": {"running": running, "total": len(services)},
         },
         "vpn_services": _vpn_services(services, profile_rows),
-        "ips": _server_ips(local),
+        "ips": _server_ips(local, _tunnel_rows()),
         "recent": audit.query(limit=10)[0],
         "_health": health,
     }

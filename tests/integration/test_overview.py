@@ -142,3 +142,8 @@ def test_tunnel_states_after_profile_import(authed, ovpn_factory):
     body = authed.get("/api/overview").json()
     tunnels = {t["name"]: t["state"] for t in body["vpn_services"]["tunnels"]}
     assert tunnels["corp2"] == "not-installed"  # no systemd unit for it
+
+
+def test_openvpn_tunnel_ip_in_overview(authed):
+    body = authed.get("/api/overview").json()
+    assert body["ips"]["openvpn"] == [{"iface": "tun0", "addr": "10.233.2.74"}]

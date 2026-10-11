@@ -6,14 +6,20 @@ as an explicit `unavailable` health state — never silent emptiness (FR-053).
 """
 from __future__ import annotations
 
+import fcntl
 import re
 import shutil
+import socket
+import struct
 import subprocess
 from pathlib import Path
 from typing import Any
 
 ALLOWED_UNITS = ("tailscaled.service", "openvpn.service", "openvpn@*.service",
                  "openvpn-client@*.service", "vpn-console.service")
+
+NET_CLASS_DIR = Path("/sys/class/net")
+_TUNNEL_PREFIXES = ("tun", "tap", "wg")
 
 SYSTEMD_SOCKET = "/run/systemd/private"
 JOURNAL_DIRS = ["/var/log/journal", "/run/log/journal"]
@@ -156,3 +162,34 @@ class HostControl:
                 "annotation": "unexposed",  # joined with exposures at the API layer
             })
         return ports
+
+    # --- tunnel interfaces -------------------------------------------------------
+
+    def interfaces(self) -> list[dict[str, Any]]:
+        """IPv4s of live tunnel interfaces (tun*/tap*/wg*) — the OpenVPN
+        client's `ifconfig` address. The container is network_mode: host, so
+        the kernel view here IS the host's. Needs no systemd mounts."""
+        out: list[dict[str, Any]] = []
+        try:
+            names = sorted(p.name for p in NET_CLASS_DIR.iterdir())
+        except OSError:
+            return out
+        for name in names:
+            if not name.startswith(_TUNNEL_PREFIXES):
+                continue
+            addr = _interface_ipv4(name)
+            if addr:
+                out.append({"iface": name, "addr": addr})
+        return out
+
+
+def _interface_ipv4(ifname: str) -> str:
+    """IPv4 of a live interface via SIOCGIFADDR — no subprocess, no netlink."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            packed = fcntl.ioctl(
+                s.fileno(), 0x8915, struct.pack("256s", ifname[:15].encode())
+            )
+        except OSError:
+            return ""
+    return socket.inet_ntoa(packed[20:24])

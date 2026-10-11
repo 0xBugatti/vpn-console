@@ -130,3 +130,20 @@ def test_missing_mounts_are_a_loud_unavailable(monkeypatch, tmp_path):
         ctl.units()
     with pytest.raises(FileNotFoundError):
         ctl.journal("tailscaled.service")
+
+
+def test_interfaces_filters_tunnel_prefixes(monkeypatch, tmp_path):
+    # fake /sys/class/net: tun0/tap1/wg0 qualify, eth0/docker0/veth never do
+    for name in ("tun0", "tap1", "wg0", "eth0", "docker0", "vethabc123"):
+        (tmp_path / name).touch()
+    monkeypatch.setattr(hostmod, "NET_CLASS_DIR", tmp_path)
+    monkeypatch.setattr(hostmod, "_interface_ipv4",
+                        lambda n: {"tun0": "10.233.2.74", "wg0": "10.9.0.1"}.get(n, ""))
+    out = hostmod.HostControl().interfaces()
+    assert out == [{"iface": "tun0", "addr": "10.233.2.74"},
+                   {"iface": "wg0", "addr": "10.9.0.1"}]
+
+
+def test_interfaces_empty_when_net_class_missing(monkeypatch):
+    monkeypatch.setattr(hostmod, "NET_CLASS_DIR", Path("/nonexistent/net/class"))
+    assert hostmod.HostControl().interfaces() == []

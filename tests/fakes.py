@@ -238,6 +238,9 @@ class FakeHost:
 
     def reset(self) -> None:
         self._broken = False
+        self.interfaces_data: list[dict[str, Any]] = [
+            {"iface": "tun0", "addr": "10.233.2.74"},
+        ]
         self.units_data: dict[str, dict[str, Any]] = {
             "tailscaled.service": {
                 "unit": "tailscaled.service",
@@ -339,3 +342,7 @@ class FakeHost:
     def listening_ports(self) -> list[dict[str, Any]]:
         self._check()
         return [dict(p) for p in self.port_entries]
+
+    def interfaces(self) -> list[dict[str, Any]]:
+        self._check()
+        return [dict(i) for i in self.interfaces_data]

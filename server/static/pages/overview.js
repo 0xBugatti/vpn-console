@@ -59,9 +59,13 @@ async function loadOverview(root, silent = false) {
 
 /* ---------- server addresses ---------- */
 function drawIps(ips) {
+  const tunnels = ips?.openvpn || [];
   const rows = [
     ["Public IPv4", ips?.public],
     ["Tailscale IP", ips?.tailscale],
+    ...tunnels.map((t) => [
+      tunnels.length > 1 ? `OpenVPN (${t.iface})` : "OpenVPN tunnel", t.addr,
+    ]),
   ].filter(([, v]) => v);
   if (!rows.length) return;
   const card = $("#ips-card");
