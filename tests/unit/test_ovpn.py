@@ -37,6 +37,15 @@ def test_multi_remote_lists_all_endpoints():
     assert len(set(hosts)) == 3
 
 
+def test_remote_without_port_defaults_to_1194():
+    # real-world configs (e.g. `remote cyber-vpn.allendevaux.net ` with a
+    # trailing space) omit the port — OpenVPN defaults it to 1194
+    body = "client\ndev tun\nproto udp\nremote gw.example.com \n<cert>\n-----BEGIN CERTIFICATE-----\n"
+    parsed = ovpn.parse(body)
+    eps = [e for e in parsed["endpoints"] if e["host"] == "gw.example.com"]
+    assert eps == [{"host": "gw.example.com", "port": 1194, "proto": None}]
+
+
 def test_missing_cert_block_reports_reason():
     parsed = ovpn.parse(_load("no-cert.ovpn"))
     assert parsed["parse_error"] == "missing certificate block"

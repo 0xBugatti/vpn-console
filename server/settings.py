@@ -62,6 +62,7 @@ class Config:
     poll_status_s: int = 10
     poll_lists_s: int = 60
     adapters: str = "real"  # VPNCONSOLE_ADAPTERS=real|fake (research D12)
+    scan_dirs: str = ""  # comma-separated read-only host mounts to scan
     session_secret: bytes = field(repr=False, default=b"")
 
     @property
@@ -94,6 +95,7 @@ def load_config() -> Config:
         poll_status_s=int(os.environ.get("VPNCONSOLE_POLL_STATUS_S", "10")),
         poll_lists_s=int(os.environ.get("VPNCONSOLE_POLL_LISTS_S", "60")),
         adapters=os.environ.get("VPNCONSOLE_ADAPTERS", "real"),
+        scan_dirs=os.environ.get("VPNCONSOLE_SCAN_DIRS", ""),
         session_secret=secret.encode() or secrets.token_bytes(32),
     )
 

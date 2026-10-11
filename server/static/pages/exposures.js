@@ -10,20 +10,25 @@ const FUNNEL_PORTS = [443, 8443, 10000];
 
 let ROOT = null;
 let DATA = null;
+let TAB = "serve";
 
 export async function renderExposures(root) {
   ROOT = root;
   root.innerHTML = `
   <div class="page-head">
     <h1>Exposures</h1>
-    <button class="btn primary sm" id="exp-add">${icon("plus", 14)} Add exposure</button>
+    <button class="btn primary sm" id="exp-add">${icon("plus", 14)} Add serve</button>
     <button class="btn ghost sm" id="exp-refresh">${icon("refresh", 14)} Refresh</button>
   </div>
   <p class="page-sub">Everything this host serves over Tailscale — and the one place it can reach the public internet.</p>
   <div id="exp-banner"></div>
 
   <section class="card">
-    <h2>Serve · Funnel · Taildrive</h2>
+    <div class="tabs" id="exp-tabs">
+      <button class="tab" data-tab="serve">Serve <span class="count"></span></button>
+      <button class="tab" data-tab="funnel">Funnel <span class="count"></span></button>
+      <button class="tab" data-tab="taildrive">Taildrive <span class="count"></span></button>
+    </div>
     <div class="table-wrap">
       <table class="table" id="exp-table">
         <thead><tr><th>Source</th><th>Scope</th><th>Serves</th><th>Status</th><th></th></tr></thead>
@@ -48,17 +53,31 @@ export async function renderExposures(root) {
   <div id="exp-dialog-host"></div>`;
 
   $("#exp-refresh", root).onclick = () => load(false);
-  $("#exp-add", root).onclick = openAddDialog;
-  const down = (data._health?.state ?? "ok") !== "ok";
-  const addBtn = $("#exp-add", root);
-  addBtn.disabled = down;
-  addBtn.title = down ? "Local node unreachable — mutations are blocked until it recovers." : "";
+  $("#exp-add", root).onclick = () => (TAB === "taildrive" ? openDriveDialog() : openAddDialog(TAB));
+  $$("#exp-tabs .tab", root).forEach((btn) => {
+    btn.onclick = () => {
+      TAB = btn.dataset.tab;
+      syncTabs();
+    };
+  });
   await load(false);
   every(12000, () => load(true));
 }
 
-/* ---------- add exposure ---------- */
-function openAddDialog() {
+function syncTabs() {
+  $$("#exp-tabs .tab", ROOT).forEach((b) => b.classList.toggle("active", b.dataset.tab === TAB));
+  const add = $("#exp-add", ROOT);
+  add.innerHTML = TAB === "taildrive"
+    ? `${icon("plus", 14)} Add drive share`
+    : `${icon("plus", 14)} Add ${TAB}`;
+  const down = (DATA?._health?.state ?? "ok") !== "ok";
+  add.disabled = down;
+  add.title = down ? "Local node unreachable — mutations are blocked until it recovers." : "";
+  if (DATA) drawEntries(DATA);
+}
+
+/* ---------- add exposure (serve / funnel) ---------- */
+function openAddDialog(preset = "serve") {
   const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
     <div class="dialog">
       <h2>Add exposure</h2>
@@ -93,6 +112,8 @@ function openAddDialog() {
   </div>`);
   document.body.appendChild(scrim);
   const kindSel = $("#exp-kind", scrim);
+  kindSel.value = preset === "funnel" ? "funnel" : "serve";
+  $("#exp-port-hint", scrim).hidden = kindSel.value !== "funnel";
   kindSel.onchange = () => {
     $("#exp-port-hint", scrim).hidden = kindSel.value !== "funnel";
   };
@@ -146,6 +167,69 @@ function openAddDialog() {
   };
 }
 
+/* ---------- add drive share (tailnet scope — its own tab & dialog) ---------- */
+function openDriveDialog() {
+  const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
+    <div class="dialog">
+      <h2>Add Taildrive share</h2>
+      <div class="body">
+        <div class="field">
+          <label for="drv-path">Folder on this host</label>
+          <input class="input mono" id="drv-path" placeholder="/srv/shared">
+        </div>
+        <div class="field">
+          <label for="drv-name">Share name</label>
+          <input class="input" id="drv-name" placeholder="shared-docs">
+          <p class="hint">Letters, digits, dots, dashes. Shows up in other devices' Taildrive views.</p>
+        </div>
+        <p class="form-error" id="drv-err" hidden></p>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost" data-close>Cancel</button>
+        <button class="btn primary" data-create>Share</button>
+      </div>
+    </div>
+  </div>`);
+  document.body.appendChild(scrim);
+  let done = false;
+  const close = () => { if (done) return; done = true; scrim.remove(); restore(); };
+  const restore = trapKeys(scrim, close);
+  $("[data-close]", scrim).onclick = close;
+  scrim.onclick = (e) => { if (e.target === scrim) close(); };
+
+  $("[data-create]", scrim).onclick = async (e) => {
+    const btn = e.currentTarget;
+    const errBox = $("#drv-err", scrim);
+    errBox.hidden = true;
+    btn.disabled = true;
+    const body = {
+      kind: "drive",
+      path: $("#drv-path", scrim).value.trim(),
+      name: $("#drv-name", scrim).value.trim(),
+    };
+    const ok = await confirmDialog({
+      title: `Share ${body.path || "(no path)"} with your tailnet?`,
+      body: `<p><strong class="mono">${esc(body.name || "(no name)")}</strong> will list the folder
+        <strong class="mono">${esc(body.path)}</strong> in the Taildrive view of <strong>every device
+        on your tailnet</strong> (read-only). It is not reachable from the public internet.</p>`,
+      confirmLabel: "Share on tailnet",
+    });
+    if (!ok) { btn.disabled = false; return; }
+    body.confirm = true; // the dialog above is the consent (confirm-tier)
+    try {
+      await api("/exposures", { method: "POST", body });
+      close();
+      toast(`Share ${body.name} created.`, "success");
+      TAB = "taildrive";
+      await load(true);
+    } catch (err) {
+      errBox.textContent = errorText(err);
+      errBox.hidden = false;
+      btn.disabled = false;
+    }
+  };
+}
+
 async function load(silent) {
   let data;
   try { data = await api("/exposures"); }
@@ -179,13 +263,28 @@ function scopeBadge(scope) {
 function drawEntries(data) {
   const tbody = $("#exp-table tbody", ROOT);
   const down = (data._health?.state ?? "ok") !== "ok";
-  if (!data.entries.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="faint">Nothing is being served.</td></tr>
-      <tr><td colspan="5"><button class="btn primary sm" data-empty-add ${down ? "disabled" : ""}>${icon("plus", 14)} Add the first exposure</button></td></tr>`;
-    $("[data-empty-add]", tbody).onclick = openAddDialog;
+  const entries = data.entries || [];
+
+  // tab counts + active tab
+  $$("#exp-tabs .tab", ROOT).forEach((b) => {
+    const n = entries.filter((e) => e.kind === b.dataset.tab).length;
+    $(".count", b).textContent = n ? String(n) : "";
+    b.classList.toggle("active", b.dataset.tab === TAB);
+  });
+
+  const rows = entries.filter((e) => e.kind === TAB);
+  const addLabel = { serve: "Add the first serve", funnel: "Add the first funnel",
+    taildrive: "Add the first drive share" }[TAB];
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="faint">${
+      TAB === "taildrive" ? "No Taildrive shares yet." : "Nothing is being served here."
+    }</td></tr>
+      <tr><td colspan="5"><button class="btn primary sm" data-empty-add ${down ? "disabled" : ""}>${icon("plus", 14)} ${addLabel}</button></td></tr>`;
+    $("[data-empty-add]", tbody).onclick = () =>
+      (TAB === "taildrive" ? openDriveDialog() : openAddDialog(TAB));
     return;
   }
-  tbody.innerHTML = data.entries.map((e) => {
+  tbody.innerHTML = rows.map((e) => {
     const drive = e.kind === "taildrive";
     const lock = down ? "disabled title=\"Local node unreachable — mutations are blocked.\"" : "";
     const toggle = drive
@@ -195,11 +294,14 @@ function drawEntries(data) {
            <span>${e.enabled ? "on" : "off"}</span>
          </label>
          <button class="btn ghost sm" data-del="${esc(e.id)}" title="Stop serving" ${lock}>${icon("x", 13)}</button>`;
+    const statusCell = drive
+      ? status("info", e.name || "share")
+      : (e.tls ? status("ok", "TLS") : status("off", "plain"));
     return `<tr data-id="${esc(e.id)}" class="${e.kind === "funnel" ? "funnel-row" : ""}">
       <td><span class="mono">${esc(e.source || e.id)}</span></td>
       <td>${scopeBadge(e.scope)}</td>
       <td class="small">${esc(e.target || "—")}</td>
-      <td>${e.tls ? status("ok", "TLS") : status("off", "plain")}</td>
+      <td>${statusCell}</td>
       <td class="row-actions">${toggle}</td>
     </tr>`;
   }).join("");

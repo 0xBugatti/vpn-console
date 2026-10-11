@@ -32,6 +32,8 @@ services:
       # Optional — when set it wins over any token stored via Settings.
       TS_API_TOKEN: ${TS_API_TOKEN:-}
       TS_TAILNET: ${TS_TAILNET:--}
+      # System-scan (Profiles → Scan system): which read-only mounts to walk.
+      VPNCONSOLE_SCAN_DIRS: ${VPNCONSOLE_SCAN_DIRS:-/scan/openvpn,/scan/home,/scan/root}
       # Optional — pin session signing across restarts (otherwise regenerated).
       VPNCONSOLE_SESSION_SECRET: ${VPNCONSOLE_SESSION_SECRET:-}
       VPNCONSOLE_PORT: ${VPNCONSOLE_PORT:-8090}
@@ -49,6 +51,12 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
       - /var/log/journal:/var/log/journal:ro
       - /run/log/journal:/run/log/journal:ro
+      # System-scan inputs (read-only!): the usual OpenVPN config locations on
+      # the host. Trim these on other machines and adjust VPNCONSOLE_SCAN_DIRS
+      # to match — the Profiles page "Scan system" feature only ever reads.
+      - /etc/openvpn:/scan/openvpn:ro
+      - /home:/scan/home:ro
+      - /root:/scan/root:ro
       # SQLite DB + plain .ovpn store — the only state that must survive.
       - data:/data
 

@@ -323,6 +323,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   box-shadow: var(--shadow-overlay);
   width: min(440px, 94vw); padding: 20px;
 }
+.dialog.wide { width: min(720px, 94vw); }
 .dialog h2 { margin-bottom: 8px; }
 .dialog .body { color: var(--muted); font-size: 13.5px; margin-bottom: 16px; }
 .dialog .body strong, .dialog .body .mono-strong { color: var(--text); }
@@ -655,6 +656,20 @@ tr.dim .status { opacity: 0.75; }
 .stat-tile.err .value { color: var(--danger); }
 .stat-tile.err { border-color: var(--danger); }
 .public-accent { color: var(--danger); font-weight: 700; }
+
+/* overview: per-service rows inside the VPN services tile + server addresses */
+.tile-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; margin-top: 6px; min-width: 0;
+}
+.tile-row .tr-name {
+  color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 55%;
+}
+.ip-rows { display: flex; flex-direction: column; gap: 8px; }
+.ip-row { display: flex; align-items: center; gap: 10px; }
+.ip-row .label { font-size: 12px; font-weight: 600; color: var(--muted); min-width: 96px; }
+.ip-row code.mono { font-size: 13.5px; }
 .key-box textarea { width: 100%; resize: vertical; margin-bottom: 8px; }
 @media (max-width: 900px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
 

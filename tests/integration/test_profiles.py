@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pytest
+
 
 def _upload(files: list[tuple[str, bytes]]) -> list[dict]:
     return [("files", (name, body, "application/octet-stream")) for name, body in files]
@@ -175,3 +177,68 @@ def test_download_serves_bytes_and_status_header(authed, fresh_db, ovpn_factory)
     assert r.content == text.encode()
     assert r.headers["x-profile-status"] == "Expired"
     assert r.headers["content-disposition"].endswith('.ovpn"')
+
+
+# --- system scan: host config dirs preview + guarded one-file import ---
+
+@pytest.fixture
+def scan_root(tmp_path, monkeypatch):
+    from server.settings import CONFIG
+
+    monkeypatch.setattr(CONFIG, "scan_dirs", str(tmp_path))
+    return tmp_path
+
+
+def test_scan_reports_new_and_imported(authed, fresh_db, scan_root, ovpn_factory):
+    dup_bytes = ovpn_factory(cn="already-here").encode()
+    _import(authed, ("already-here.ovpn", dup_bytes))
+    (scan_root / "fresh.ovpn").write_bytes(ovpn_factory(cn="fresh").encode())
+    (scan_root / "already-here.ovpn").write_bytes(dup_bytes)
+    (scan_root / "broken.ovpn").write_bytes(b"client\ndev tun\n")
+
+    body = authed.get("/api/profiles/scan").json()
+    by_name = {c["name"]: c for c in body["candidates"]}
+    assert by_name["fresh"]["status"] == "new"
+    assert by_name["fresh"]["path"] == str(scan_root / "fresh.ovpn")
+    assert by_name["already-here"]["status"] == "imported"
+    assert by_name["already-here"]["imported_profile_id"]
+    assert by_name["broken"]["status"] == "error"
+    # new candidates sort ahead of already-imported ones
+    statuses = [c["status"] for c in body["candidates"]]
+    assert statuses.index("new") < statuses.index("imported")
+
+
+def test_scan_ignores_non_configs_and_missing_roots(authed, fresh_db, scan_root):
+    (scan_root / "readme.txt").write_text("not a config")
+    (scan_root / "sub").mkdir()
+    (scan_root / "sub" / "deep.ovpn").write_bytes(b"client\n")  # parse error, still seen
+    from server.settings import CONFIG
+
+    monkey_dirs = CONFIG.scan_dirs + ",/nonexistent-xyz"
+    CONFIG.scan_dirs = monkey_dirs
+    try:
+        body = authed.get("/api/profiles/scan").json()
+    finally:
+        CONFIG.scan_dirs = str(scan_root)
+    names = {c["name"] for c in body["candidates"]}
+    assert names == {"deep"}  # .txt skipped, missing root skipped
+
+
+def test_import_system_happy_path(authed, fresh_db, scan_root, ovpn_factory):
+    cfg = scan_root / "fromhost.ovpn"
+    cfg.write_bytes(ovpn_factory(cn="fromhost").encode())
+    r = authed.post("/api/profiles/import-system", json={"path": str(cfg)})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "imported" and r.json()["parse_error"] is None
+    assert any(p["name"] == "fromhost" for p in authed.get("/api/profiles").json()["profiles"])
+    # re-import the same file → duplicate, not a second row
+    r2 = authed.post("/api/profiles/import-system", json={"path": str(cfg)})
+    assert r2.json()["status"] == "duplicate"
+
+
+def test_import_system_rejects_outside_scan_roots(authed, fresh_db, scan_root, tmp_path):
+    outside = tmp_path.parent / "elsewhere.ovpn"
+    outside.write_bytes(b"client\n")
+    r = authed.post("/api/profiles/import-system", json={"path": "/etc/passwd"})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "outside_scan_roots"

@@ -12,7 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-ALLOWED_UNITS = ("tailscaled.service", "openvpn@*.service", "vpn-console.service")
+ALLOWED_UNITS = ("tailscaled.service", "openvpn.service", "openvpn@*.service",
+                 "openvpn-client@*.service", "vpn-console.service")
 
 SYSTEMD_SOCKET = "/run/systemd/private"
 JOURNAL_DIRS = ["/var/log/journal", "/run/log/journal"]
@@ -78,7 +79,8 @@ class HostControl:
         found: list[dict[str, Any]] = []
         list_out = self._run([self.systemctl, "--no-pager", "list-units", "--all",
                               "--plain", "--no-legend", "tailscaled.service",
-                              "openvpn@*.service", "vpn-console.service"])
+                              "openvpn.service", "openvpn@*.service",
+                              "openvpn-client@*.service", "vpn-console.service"])
         known = {line.split()[0] for line in list_out.splitlines() if line.strip()}
         for unit in sorted(known) or ["tailscaled.service"]:
             found.append(self.unit_state(unit))

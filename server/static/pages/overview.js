@@ -25,6 +25,11 @@ export async function renderOverview(root) {
 
   <div class="stat-row" id="tiles"></div>
 
+  <section class="card" id="ips-card" hidden>
+    <h2>Server addresses</h2>
+    <div id="ips-rows" class="ip-rows"></div>
+  </section>
+
   <section class="card">
     <h2>Recent activity</h2>
     <div class="table-wrap">
@@ -47,8 +52,29 @@ async function loadOverview(root, silent = false) {
 
   $("#ov-banner", root).innerHTML = worstBanner(data);
   drawAttention(data.attention);
-  drawTiles(data.tiles, data.attention);
+  drawTiles(data.tiles, data.attention, data.vpn_services);
+  drawIps(data.ips);
   drawRecent(data.recent);
+}
+
+/* ---------- server addresses ---------- */
+function drawIps(ips) {
+  const rows = [
+    ["Public IPv4", ips?.public],
+    ["Tailscale IP", ips?.tailscale],
+  ].filter(([, v]) => v);
+  if (!rows.length) return;
+  const card = $("#ips-card");
+  card.hidden = false;
+  $("#ips-rows", card).innerHTML = rows.map(([label, value]) => `
+    <div class="ip-row">
+      <span class="label">${esc(label)}</span>
+      <code class="mono">${esc(value)}</code>
+      <button class="btn ghost sm" data-copy="${esc(value)}" title="Copy ${esc(label)}">${icon("copy", 13)} Copy</button>
+    </div>`).join("");
+  $$("button[data-copy]", card).forEach((b) => {
+    b.onclick = () => copyText(b.dataset.copy, "Address copied");
+  });
 }
 
 function worstBanner(data) {
@@ -96,13 +122,39 @@ function drawAttention(items) {
 }
 
 /* ---------- five stat tiles (FR-030, FR-032) ---------- */
-function drawTiles(tiles, attention) {
+const UNIT_SEV = {
+  active: ["ok", "Running"], running: ["ok", "Running"], exited: ["ok", "Active (exited)"],
+  inactive: ["warn", "Inactive"], failed: ["err", "Failed"],
+  "not-found": ["err", "Missing"], unknown: ["warn", "Unknown"],
+};
+const TUNNEL_SEV = { up: ["ok", "Tunnel up"], down: ["warn", "Tunnel down"],
+  "not-installed": ["off", "Not installed as service"] };
+
+function drawTiles(tiles, attention, vpn) {
   const sevFor = (prefix) => {
     const hits = attention.filter((a) => a.code.startsWith(prefix));
     return hits.some((a) => a.severity === "red") ? "err"
       : hits.length ? "warn" : "";
   };
   const nodeState = tiles.node.state;
+
+  // VPN services tile: explicit Tailscale + OpenVPN rows, then tunnels
+  const rows = [];
+  let vpnCls = "";
+  if (vpn) {
+    for (const row of [vpn.tailscale, vpn.openvpn].filter(Boolean)) {
+      // a oneshot unit reports active/exited — show that distinctly
+      const key = row.state === "active" && row.sub_state === "exited" ? "exited" : row.state;
+      const [kind, label] = UNIT_SEV[key] || UNIT_SEV.unknown;
+      if (kind === "err") vpnCls = "err"; else if (kind === "warn" && vpnCls !== "err") vpnCls = "warn";
+      rows.push(`<div class="tile-row"><span class="tr-name">${row.unit.startsWith("tailscaled") ? "Tailscale" : "OpenVPN"}</span> ${status(kind, label)}</div>`);
+    }
+    for (const t of vpn.tunnels || []) {
+      const [kind, label] = TUNNEL_SEV[t.state] || TUNNEL_SEV["not-installed"];
+      rows.push(`<div class="tile-row"><span class="tr-name" title="${esc(t.name)}">${esc(t.name)}</span> ${status(kind, label)}</div>`);
+    }
+  }
+
   const t = [
     { icon: "node", label: "Local node", value: nodeState,
       cls: nodeState === "Running" ? "ok" : "err", sub: "tailscaled on this host" },
@@ -113,14 +165,15 @@ function drawTiles(tiles, attention) {
     { icon: "globe", label: "Exposures",
       value: `${tiles.exposures.tailnet} <span class="${tiles.exposures.public_alert ? "public-accent" : ""}">/ ${tiles.exposures.public} public</span>`,
       cls: tiles.exposures.public_alert ? "err" : sevFor("exposure."), sub: "tailnet / public" },
-    { icon: "services", label: "Services", value: `${tiles.services.running} of ${tiles.services.total}`,
-      cls: sevFor("service."), sub: "running" },
+    { icon: "services", label: "VPN services", value: `${tiles.services.running} of ${tiles.services.total}`,
+      cls: vpnCls || sevFor("service."), sub: "running", rows },
   ];
   $("#tiles").innerHTML = t.map((x) => `
     <div class="stat-tile ${x.cls}" ${x.cls === "err" ? 'data-sev="red"' : x.cls === "warn" ? 'data-sev="amber"' : ""}>
       <span class="label">${icon(x.icon, 14)} ${esc(x.label)}</span>
       <span class="value">${x.value}</span>
       <span class="sub">${esc(x.sub)}</span>
+      ${(x.rows || []).join("")}
     </div>`).join("");
 }
 

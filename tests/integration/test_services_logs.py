@@ -18,7 +18,8 @@ def wait_job(authed, job_id: str, timeout: float = 3.0) -> dict:
 def test_services_list_is_allow_listed(authed):
     body = authed.get("/api/services").json()
     names = [u["unit"] for u in body["units"]]
-    assert names == ["tailscaled.service", "openvpn@corp.service", "vpn-console.service"]
+    assert names == ["tailscaled.service", "openvpn.service",
+                     "openvpn@corp.service", "vpn-console.service"]
     assert body["_health"]["state"] == "ok"
     ts = next(u for u in body["units"] if u["unit"] == "tailscaled.service")
     assert ts["state"] == "running" and ts["enabled_on_boot"] is True

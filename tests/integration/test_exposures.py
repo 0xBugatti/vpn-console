@@ -126,3 +126,30 @@ def test_mutations_blocked_while_local_down(authed, fakes):
         r = call()
         assert r.status_code == 409, r.text
         assert r.json()["error"]["code"] == "subsystem_unavailable"
+
+
+# --- taildrive shares: their own tab, confirm-tier, validated (owner request) ---
+
+def test_drive_share_requires_confirm(authed):
+    r = authed.post("/api/exposures", json={"kind": "drive", "path": "/srv/docs", "name": "docs"})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "confirm_required"
+
+
+def test_drive_share_create_lists_with_name(authed):
+    r = authed.post("/api/exposures", json={
+        "kind": "drive", "path": "/srv/docs", "name": "docs", "confirm": True})
+    assert r.status_code == 200, r.text
+    drv = [e for e in authed.get("/api/exposures").json()["entries"] if e["kind"] == "taildrive"]
+    assert any(e["source"] == "/srv/docs" and e.get("name") == "docs" for e in drv)
+    actions = [e["action"] for e in authed.get("/api/audit", params={"limit": 50}).json()["entries"]]
+    assert "exposure.create" in actions
+
+
+def test_drive_share_validation(authed):
+    r = authed.post("/api/exposures", json={
+        "kind": "drive", "path": "srv/docs", "name": "docs", "confirm": True})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_path"
+    r = authed.post("/api/exposures", json={
+        "kind": "drive", "path": "/srv/docs", "name": "bad name!", "confirm": True})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_name"

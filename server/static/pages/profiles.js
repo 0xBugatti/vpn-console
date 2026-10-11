@@ -17,6 +17,7 @@ export async function renderProfiles(root) {
   root.innerHTML = `
   <div class="page-head">
     <h1>Profiles</h1>
+    <button class="btn ghost sm" id="scan-btn">${icon("search", 15)} Scan system</button>
     <button class="btn primary sm" id="import-btn">${icon("upload", 15)} Import</button>
   </div>
   <p class="page-sub">OpenVPN client profiles. Status comes from the embedded certificate — expired profiles are flagged before your users hit them.</p>
@@ -67,6 +68,7 @@ export async function renderProfiles(root) {
   zone.addEventListener("drop", (e) => importFiles([...e.dataTransfer.files]));
 
   $("#import-btn", root).onclick = () => input.click();
+  $("#scan-btn", root).onclick = openScanDialog;
   const qInput = $("#profile-q", root);
   qInput.onkeydown = (e) => {
     if (e.key === "Enter") { state.q = qInput.value.trim(); load(root); }
@@ -248,6 +250,113 @@ async function resolveDuplicate(chip, body, action) {
     chip.className = "import-chip error";
     chip.innerHTML = `${icon("x", 13)} ${esc(body.name)} — ${esc(errorText(err))}`;
   }
+}
+
+/* ---------- system scan (US2 extension): import host configs in place ---------- */
+const SCAN_CHIP = {
+  new: ["ok", "New"],
+  imported: ["off", "Already imported"],
+  error: ["err", "Parse error"],
+  "too-large": ["warn", "Too large"],
+  unreadable: ["err", "Unreadable"],
+};
+
+async function openScanDialog() {
+  const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
+    <div class="dialog wide">
+      <h2>Scan system for OpenVPN configs</h2>
+      <div class="body"><p class="hint" id="scan-status">Scanning /etc/openvpn, /home, /root …</p></div>
+      <div class="table-wrap" style="max-height:50vh;overflow:auto">
+        <table class="table" id="scan-table">
+          <thead><tr><th>Found</th><th>Endpoint</th><th>Cert expiry</th><th>State</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost" data-close>Close</button>
+        <button class="btn primary" data-import-all hidden>Import all new</button>
+      </div>
+    </div>
+  </div>`);
+  document.body.appendChild(scrim);
+  $("[data-close]", scrim).onclick = () => scrim.remove();
+  scrim.onclick = (e) => { if (e.target === scrim) scrim.remove(); };
+
+  let candidates = [];
+  try {
+    const r = await api("/profiles/scan");
+    candidates = r.candidates || [];
+    $("#scan-status", scrim).textContent = candidates.length
+      ? `${candidates.length} config file(s) found on this host.`
+      : "No .ovpn/.conf files found in the scan locations.";
+  } catch (err) {
+    $("#scan-status", scrim).textContent = errorText(err);
+    return;
+  }
+
+  const tbody = $("#scan-table tbody", scrim);
+  const draw = () => {
+    if (!candidates.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="faint">Nothing to import.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = candidates.map((c, i) => {
+      const [kind, label] = SCAN_CHIP[c.status] || ["off", c.status];
+      const showPath = c.display_path || c.path;
+      return `<tr>
+        <td><span class="mono small">${esc(c.name)}</span>
+            <div class="faint small mono">${esc(showPath)}</div></td>
+        <td class="small mono">${esc(c.endpoint || "—")}</td>
+        <td class="small">${esc(c.cert_expires_at ? c.cert_expires_at.slice(0, 10) : "—")}</td>
+        <td>${status(kind, label)}${c.parse_error ? `<div class="faint small">${esc(c.parse_error)}</div>` : ""}</td>
+        <td class="row-actions">${c.status === "new"
+          ? `<button class="btn primary sm" data-imp="${i}">Import</button>`
+          : ""}</td>
+      </tr>`;
+    }).join("");
+    $$("[data-imp]", tbody).forEach((btn) => {
+      btn.onclick = () => importCandidate(candidates[Number(btn.dataset.imp)], btn, draw);
+    });
+    const newCount = candidates.filter((c) => c.status === "new").length;
+    $("[data-import-all]", scrim).hidden = !newCount;
+    $("[data-import-all]", scrim).textContent = `Import all new (${newCount})`;
+  };
+  draw();
+
+  const importAll = $("[data-import-all]", scrim);
+  importAll.onclick = async () => {
+    importAll.disabled = true;
+    for (const c of candidates.filter((x) => x.status === "new")) {
+      try {
+        await api("/profiles/import-system", { method: "POST", body: { path: c.path } });
+        c.status = "imported";
+      } catch { /* leave as new; per-row errors surface on retry */ }
+    }
+    importAll.disabled = false;
+    toast("Scan import finished.", "success");
+    draw();
+    await load(document.getElementById("page"));
+  };
+}
+
+async function importCandidate(c, btn, redraw) {
+  btn.disabled = true;
+  try {
+    const r = await api("/profiles/import-system", { method: "POST", body: { path: c.path } });
+    if (r.status === "imported") {
+      c.status = "imported";
+      toast(`${c.name} imported.`, "success");
+    } else if (r.status === "duplicate") {
+      c.status = "imported";
+      toast(`${c.name} was already imported.`, "info");
+    }
+    await load(document.getElementById("page"));
+  } catch (err) {
+    toast(errorText(err), "error");
+    btn.disabled = false;
+    return;
+  }
+  redraw();
 }
 
 /* ---------- mutations ---------- */

@@ -223,6 +223,10 @@ class FakeLocal:
         if funnel:
             cfg.get("AllowFunnel", {}).pop(f"{self.dns_name}:{key}", None)
 
+    def drive_add(self, name: str, path: str) -> None:
+        self._check()
+        self.drive_shares_data[path] = {"access": "readonly", "share_name": name}
+
     def drive_remove(self, path: str) -> None:
         self._check()
         self.drive_shares_data.pop(path, None)
@@ -241,6 +245,13 @@ class FakeHost:
                 "state": "running", "sub_state": "running",
                 "enabled_on_boot": True,
                 "since": "Mon 2026-09-28 04:12:33 UTC", "result": "success",
+            },
+            "openvpn.service": {
+                "unit": "openvpn.service",
+                "description": "OpenVPN service",
+                "state": "inactive", "sub_state": "dead",
+                "enabled_on_boot": True,
+                "since": "Sun 2026-10-05 22:01:09 UTC", "result": "success",
             },
             "openvpn@corp.service": {
                 "unit": "openvpn@corp.service",

@@ -14,7 +14,11 @@ MAX_PROFILE_BYTES = 1_048_576  # 1 MiB cap (spec edge case)
 EXPIRING_WINDOW = dt.timedelta(days=14)
 
 _BLOCK_RE = re.compile(r"<(ca|cert|key|tls-auth|tls-crypt)>(.*?)</\1>", re.DOTALL)
-_REMOTE_RE = re.compile(r"^\s*remote\s+(\S+)\s+(\d+)(?:\s+(udp6?|tcp6?))?\s*$", re.MULTILINE)
+# Port is optional: OpenVPN defaults `remote <host>` to 1194. Proto may ride
+# on the remote line or come from the standalone `proto` directive.
+_REMOTE_RE = re.compile(
+    r"^\s*remote\s+(\S+)(?:\s+(\d+))?(?:\s+(udp6?|tcp6?))?\s*$", re.MULTILINE
+)
 _KV_RE = re.compile(r"^\s*(cipher|data-ciphers|tls-version-min|proto)\s+(\S+)\s*$", re.MULTILINE)
 
 
@@ -36,7 +40,9 @@ def parse(text: str) -> dict[str, Any]:
     }
 
     for host, port, proto in _REMOTE_RE.findall(text):
-        out["endpoints"].append({"host": host, "port": int(port), "proto": proto or None})
+        out["endpoints"].append(
+            {"host": host, "port": int(port) if port else 1194, "proto": proto or None}
+        )
 
     for key, value in _KV_RE.findall(text):
         if key == "cipher" and out["cipher"] is None:

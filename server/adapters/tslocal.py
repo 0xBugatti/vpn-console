@@ -141,6 +141,10 @@ class TailscaleLocal:
         cmd = "funnel" if funnel else "serve"
         self._cli(cmd, "--bg", f"--{scheme}={port}", "off")
 
+    def drive_add(self, name: str, path: str) -> None:
+        # v1.104 CLI: `tailscale drive share <name> <path>` (name FIRST)
+        self._cli("drive", "share", name, path)
+
     def drive_remove(self, path: str) -> None:
         self._cli("drive", "share", "remove", path)
 

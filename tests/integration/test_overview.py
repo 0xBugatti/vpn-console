@@ -10,8 +10,8 @@ def test_tiles_counts(authed):
     assert t["devices"]["total"] == 6
     assert t["devices"]["online"] == 4
     assert t["node"]["state"] == "Running"
-    assert t["services"]["total"] == 3
-    assert t["services"]["running"] == 2  # openvpn@corp failed in the fixture
+    assert t["services"]["total"] == 4  # incl. the openvpn.service bag-of-config unit
+    assert t["services"]["running"] == 2  # openvpn@corp failed, openvpn.service inactive
     # fixture serve config: 443 funnel + 8080 serve (+ drive shares)
     assert t["exposures"]["public"] == 1
     assert t["exposures"]["public_alert"] is True
@@ -108,3 +108,37 @@ def test_overview_degrades_when_cloud_down(authed, fakes):
     body = authed.get("/api/overview").json()
     assert body["tiles"]["devices"]["total"] == 0  # no data, not fake zeros
     assert body["_health"]["tscloud"]["state"] in ("degraded", "unavailable")
+
+
+# --- owner-requested additions: explicit service rows, IPs, tunnel states ---
+
+def test_vpn_services_rows(authed):
+    body = authed.get("/api/overview").json()
+    vpn = body["vpn_services"]
+    assert vpn["tailscale"]["state"] == "running"   # fake vocabulary
+    assert vpn["openvpn"]["state"] == "inactive"    # the bag-of-config unit
+    # openvpn@corp is a tunnel unit, not the "openvpn" row — it appears as failed
+    assert vpn["openvpn"]["state"] != "failed"
+
+
+def test_server_ips_from_local_status(authed):
+    body = authed.get("/api/overview").json()
+    ips = body["ips"]
+    assert ips["tailscale"] == "100.84.12.1"        # v4 from FakeLocal.status
+    assert "fd7a" not in ips["tailscale"]           # v6 stays on the Node page
+
+
+def test_tunnel_states_track_unit_instances(authed):
+    body = authed.get("/api/overview").json()
+    tunnels = {t["name"]: t["state"] for t in body["vpn_services"]["tunnels"]}
+    assert isinstance(tunnels, dict)  # imported profiles (none yet) add entries
+    # the seeded openvpn@corp unit is not tracked as a profile tunnel
+    assert "corp" not in tunnels
+
+
+def test_tunnel_states_after_profile_import(authed, ovpn_factory):
+    authed.post("/api/profiles/import",
+                files=[("files", ("corp2.ovpn", ovpn_factory().encode(), "text/plain"))])
+    body = authed.get("/api/overview").json()
+    tunnels = {t["name"]: t["state"] for t in body["vpn_services"]["tunnels"]}
+    assert tunnels["corp2"] == "not-installed"  # no systemd unit for it

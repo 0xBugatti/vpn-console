@@ -7,6 +7,7 @@ confirm-tier. Everything is audited ok|failed (constitution III, FR-043/044).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body
@@ -72,6 +73,7 @@ def _entries(serve_cfg: dict[str, Any], drive_cfg: dict[str, Any]) -> list[dict[
             "scope": "share",
             "source": path,
             "target": f"{info.get('access', 'read')} share",
+            "name": info.get("share_name") or "",
             "raw_target": path,
             "port": None,
             "tls": False,
@@ -152,13 +154,41 @@ def _blocked() -> None:
     common.require_ok(_serve_r(), "local node")
 
 
+def _create_drive(body: dict[str, Any]) -> dict[str, Any]:
+    """Taildrive share (tailnet scope → confirm-tier, same as serve)."""
+    path = str(body.get("path") or "").strip()
+    name = str(body.get("name") or "").strip()
+    if not path.startswith("/"):
+        raise api_error(422, "invalid_path", "path must be an absolute filesystem path.")
+    if not _DRIVE_NAME_RE.fullmatch(name):
+        raise api_error(422, "invalid_name",
+                        "share name must start with a letter or digit (letters, digits, . _ - after).")
+    require_confirm(body)  # shares are visible to the whole tailnet
+    _blocked()
+    try:
+        common.local().drive_add(name, path)
+    except Exception as exc:  # noqa: BLE001 — audited boundary (SC-004)
+        audit.insert("exposure.create", "exposures", target=path,
+                     outcome="failed", detail={"error": str(exc)[:300], "kind": "drive"})
+        raise api_error(502, "action_failed", f"tailscaled rejected the share: {exc}") from exc
+    common.local_cache().invalidate("drive")
+    audit.insert("exposure.create", "exposures", target=path,
+                 detail={"kind": "drive", "name": name, "path": path})
+    return {"ok": True}
+
+
+_DRIVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
 @router.post("/exposures")
 def create_exposure(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     kind = body.get("kind")
+    if kind == "drive":
+        return _create_drive(body)
     port = body.get("port")
     target = str(body.get("target") or "").strip()
     if kind not in ("serve", "funnel"):
-        raise api_error(422, "bad_kind", 'kind must be "serve" or "funnel" (drive shares are managed on the host).')
+        raise api_error(422, "bad_kind", 'kind must be "serve", "funnel" or "drive".')
     if not isinstance(port, int):
         raise api_error(422, "bad_port", "port must be an integer.")
     if not (target.startswith("http://") or target.startswith("https://") or target.startswith("/")):

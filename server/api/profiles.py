@@ -159,6 +159,54 @@ def list_profiles(q: str = "") -> dict[str, Any]:
     return {"profiles": [_view(r) for r in rows]}
 
 
+@router.get("/profiles/scan")
+def scan_system_profiles() -> dict[str, Any]:
+    """Preview importable configs from the host's scan mounts (read-only)."""
+    from .. import systemscan
+
+    return {"candidates": systemscan.scan(), "roots": CONFIG.scan_dirs}
+
+
+@router.post("/profiles/import-system")
+def import_system_profile(body: dict[str, Any]) -> dict[str, Any]:
+    """Import ONE file discovered by the scan — path must be under a scan root,
+    so the endpoint is not an arbitrary-file-read primitive."""
+    raw_path = str(body.get("path") or "")
+    try:
+        resolved = Path(raw_path).resolve(strict=True)
+    except OSError:
+        raise api_error(404, "not_found", "File not found — rescan and try again.") from None
+    allowed = any(
+        resolved.is_relative_to(Path(root.strip()).resolve())
+        for root in CONFIG.scan_dirs.split(",") if root.strip()
+    )
+    if not allowed:
+        raise api_error(422, "outside_scan_roots",
+                        "Only files listed by the system scan can be imported.")
+    try:
+        raw = resolved.read_bytes()
+    except OSError as exc:
+        raise api_error(422, "unreadable", f"Could not read the file: {exc}") from exc
+    if len(raw) > ovpn.MAX_PROFILE_BYTES:
+        raise api_error(413, "too_large", "Config exceeds the 1 MiB cap.")
+
+    text = raw.decode("utf-8", errors="replace")
+    name = _clean_name(resolved.stem)
+    meta = ovpn.parse(text)
+    dup = get_conn().execute(
+        "SELECT id FROM profiles WHERE config_sha256=?", (meta["config_sha256"],)
+    ).fetchone()
+    if dup:
+        return {"status": "duplicate", "duplicate_of": dup["id"], "name": name,
+                "parse_error": meta["parse_error"]}
+    pid = _store_profile(name, text)
+    audit.insert("profile.import", "profiles", target=name,
+                 detail={"id": pid, "source": "system-scan", "path": str(resolved),
+                         "parse_error": meta["parse_error"]})
+    return {"status": "imported", "id": pid, "name": name,
+            "parse_error": meta["parse_error"]}
+
+
 @router.get("/profiles/{pid}")
 def get_profile(pid: str) -> dict[str, Any]:
     return _view(_get_row(pid), with_text=True)

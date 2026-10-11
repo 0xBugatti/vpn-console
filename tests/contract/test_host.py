@@ -116,7 +116,9 @@ def test_unit_action_allow_list(monkeypatch):
 def test_unit_allowed_patterns():
     assert hostmod.unit_allowed("tailscaled.service")
     assert hostmod.unit_allowed("openvpn@corp.service")
-    assert not hostmod.unit_allowed("openvpn.service")  # template units only
+    assert hostmod.unit_allowed("openvpn.service")  # the bag-of-config unit (overview)
+    assert hostmod.unit_allowed("openvpn-client@corp.service")  # per-profile tunnels
+    assert not hostmod.unit_allowed("openvpn-server@corp.service")
     assert not hostmod.unit_allowed("docker.service")
 
 
