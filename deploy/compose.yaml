@@ -34,6 +34,8 @@ services:
       TS_TAILNET: ${TS_TAILNET:--}
       # System-scan (Profiles → Scan system): which read-only mounts to walk.
       VPNCONSOLE_SCAN_DIRS: ${VPNCONSOLE_SCAN_DIRS:-/scan/openvpn,/scan/home,/scan/root}
+      # optional login link token (>= 24 chars); prefer creating one in Settings
+      VPNCONSOLE_LOGIN_TOKEN: ${VPNCONSOLE_LOGIN_TOKEN:-}
       # Optional — pin session signing across restarts (otherwise regenerated).
       VPNCONSOLE_SESSION_SECRET: ${VPNCONSOLE_SESSION_SECRET:-}
       VPNCONSOLE_PORT: ${VPNCONSOLE_PORT:-8090}

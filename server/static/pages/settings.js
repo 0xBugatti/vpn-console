@@ -4,6 +4,7 @@
    here only ever writes, never displays. */
 import {
   api, toast, errorText, esc, $, $$, status, icon, typeConfirmDialog, applyTheme,
+  confirmDialog, copyText,
 } from "../app.js";
 
 let ROOT = null;
@@ -62,6 +63,27 @@ export async function renderSettings(root) {
   </section>
 
   <section class="card">
+    <h2>Login link</h2>
+    <p class="hint">A secret URL that signs you in without the password, for bookmarks or a shortcut on a trusted device. Anyone who has the link is signed in as admin, so keep it as private as the password.</p>
+    <p class="action-note" id="ll-status"></p>
+    <p class="action-note danger-text" id="ll-http" hidden>This page is served over plain HTTP, so a link opened at this address crosses the network unencrypted. Open it through the SSH tunnel (localhost) or over Tailscale.</p>
+    <div id="ll-reveal" hidden>
+      <div class="field" style="margin-top:12px">
+        <label for="ll-url">Your login link (shown only once)</label>
+        <div class="link-line">
+          <input class="input mono" id="ll-url" readonly>
+          <button class="btn sm" id="ll-copy">${icon("copy", 14)} Copy</button>
+        </div>
+        <span class="hint">Copy it now. Only a fingerprint is stored, so the console cannot show it again. Create a new one if you lose it.</span>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary sm" id="ll-create">Create login link</button>
+      <button class="btn ghost sm" id="ll-revoke" hidden>Revoke link</button>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Tailscale credential</h2>
     <p class="hint" id="ts-source"></p>
     <div class="settings-grid">
@@ -112,6 +134,10 @@ export async function renderSettings(root) {
   $("#ts-save", root).onclick = saveToken;
   $("#ts-clear", root).onclick = clearToken;
   $("#ts-test", root).onclick = testToken;
+  $("#ll-create", root).onclick = createLoginLink;
+  $("#ll-revoke", root).onclick = revokeLoginLink;
+  $("#ll-copy", root).onclick = () => copyText($("#ll-url", root).value, "Login link copied");
+  $("#ll-url", root).onfocus = (e) => e.target.select();
   $("#dz-wipe", root).onclick = wipeProfiles;
   $("#dz-reset", root).onclick = resetPolicy;
 }
@@ -124,6 +150,7 @@ async function load(silent) {
   $("#set-theme", ROOT).value = s.theme;
   $("#set-poll-status", ROOT).value = s.poll_status_s;
   $("#set-poll-lists", ROOT).value = s.poll_lists_s;
+  drawLoginLink(s.login_link);
   $("#ts-current", ROOT).value = s.ts_token || "(none configured)";
   $("#ts-source", ROOT).textContent = s.ts_token_source === "env"
     ? "The credential comes from the TS_API_TOKEN environment variable. It cannot be edited here. Remove the variable to manage the credential in the app."
@@ -202,7 +229,8 @@ async function putToken(body) {
   try {
     const s = await api("/settings", { method: "PUT", body });
     toast("Credential updated. Run Test connection to verify.", "success");
-    $("#ts-current", ROOT).value = s.ts_token || "(none configured)";
+    drawLoginLink(s.login_link);
+  $("#ts-current", ROOT).value = s.ts_token || "(none configured)";
     await load(true);
   } catch (err) {
     const errBox = $("#ts-err", ROOT);
@@ -270,4 +298,56 @@ async function resetPolicy() {
   } catch (err) {
     toast(errorText(err), "error");
   }
+}
+
+/* ---------- login link ---------- */
+function drawLoginLink(ll) {
+  const st = $("#ll-status", ROOT);
+  if (!ll || !ll.enabled) {
+    st.innerHTML = `${status("off", "Off")} No login link exists. Only the password signs you in.`;
+  } else if (ll.created_at) {
+    st.innerHTML = `${status("ok", "On")} Created ${esc(new Date(ll.created_at).toLocaleString())}.${ll.env ? " A token from VPNCONSOLE_LOGIN_TOKEN also works." : ""}`;
+  } else {
+    st.innerHTML = `${status("ok", "On")} Set by the VPNCONSOLE_LOGIN_TOKEN environment variable. Change it in deploy/.env.`;
+  }
+  $("#ll-create", ROOT).textContent = ll && ll.created_at ? "Replace link" : "Create login link";
+  $("#ll-revoke", ROOT).hidden = !(ll && ll.created_at);
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+  $("#ll-http", ROOT).hidden = location.protocol === "https:" || local;
+}
+
+async function createLoginLink() {
+  const replacing = $("#ll-create", ROOT).textContent.startsWith("Replace");
+  const ok = await confirmDialog({
+    title: replacing ? "Replace the login link?" : "Create a login link?",
+    body: `<p>Anyone who opens this link is signed in as admin without the password.${replacing ? " The current link stops working immediately." : ""}</p>`,
+    confirmLabel: replacing ? "Replace link" : "Create link",
+  });
+  if (!ok) return;
+  try {
+    const r = await api("/settings/login-link", { method: "POST", body: { confirm: true } });
+    // Build the URL from this page's own origin: behind a tunnel or proxy that is
+    // the address you actually reach the console on.
+    $("#ll-url", ROOT).value = `${location.origin}/login?token=${r.token}`;
+    $("#ll-reveal", ROOT).hidden = false;
+    drawLoginLink(r);
+    toast(replacing ? "Login link replaced." : "Login link created.", "success");
+  } catch (err) { toast(errorText(err), "error"); }
+}
+
+async function revokeLoginLink() {
+  const ok = await confirmDialog({
+    title: "Revoke the login link?",
+    body: "<p>The link stops working immediately. Sessions already signed in stay signed in.</p>",
+    confirmLabel: "Revoke link",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await api("/settings/login-link", { method: "DELETE", body: { confirm: true } });
+    $("#ll-reveal", ROOT).hidden = true;
+    $("#ll-url", ROOT).value = "";
+    drawLoginLink(r);
+    toast("Login link revoked.", "success");
+  } catch (err) { toast(errorText(err), "error"); }
 }

@@ -10,11 +10,11 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Request
 
-from .. import audit, auth
+from .. import audit, auth, loginlink
 from ..db import get_conn, get_setting, set_setting
 from ..settings import CONFIG, hash_password, verify_password
 from . import common
-from .schemas import api_error, require_typed
+from .schemas import api_error, require_confirm, require_typed
 
 router = APIRouter()
 
@@ -40,6 +40,7 @@ def get_settings() -> dict[str, Any]:
         "poll_status_s": int(get_setting("poll_status_s") or CONFIG.poll_status_s),
         "poll_lists_s": int(get_setting("poll_lists_s") or CONFIG.poll_lists_s),
         "theme": get_setting("theme") or "system",
+        "login_link": loginlink.status(),
     }
 
 
@@ -169,3 +170,26 @@ def reset_policy(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     audit.insert("settings.reset-policy", "settings", outcome="ok",
                  detail={"bytes": len(row["text"])})
     return {"ok": True}
+
+
+# --- login link (owner request): a URL token that signs the admin in ---------
+
+@router.post("/settings/login-link")
+def create_login_link(request: Request, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Generate (or replace) the link. The plain token is returned exactly once."""
+    require_confirm(body)  # it is a credential: anyone holding the URL is signed in
+    replaced = bool(loginlink.status()["created_at"])
+    token = loginlink.generate()
+    audit.insert("settings.login_link", "settings",
+                 detail={"action": "replaced" if replaced else "created"})  # never the token
+    base = str(request.base_url).rstrip("/")
+    return {"token": token, "url": f"{base}/login?token={token}", **loginlink.status()}
+
+
+@router.delete("/settings/login-link")
+def delete_login_link(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    require_confirm(body)
+    if not loginlink.revoke():
+        raise api_error(404, "no_login_link", "There is no stored login link to revoke.")
+    audit.insert("settings.login_link", "settings", detail={"action": "revoked"})
+    return loginlink.status()

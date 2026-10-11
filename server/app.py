@@ -55,6 +55,8 @@ for module in (overview, profiles, shares, devices, acl, node, exposures,
 app.include_router(auth_api.router, prefix="/api")
 # Share routes live at the root: /s/{token} is the QR-encoded public URL.
 app.include_router(share.router)
+# Login link (/login?token=… and /?token=…) — must precede the static mount.
+app.include_router(auth_api.link_router)
 
 
 @app.exception_handler(HTTPException)

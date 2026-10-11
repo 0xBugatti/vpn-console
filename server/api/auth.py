@@ -1,15 +1,20 @@
 """US1 — the single gate (FR-001, SC-001)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
-from .. import audit, auth
+from .. import audit, auth, loginlink
 from ..db import get_setting, set_setting
 from ..settings import CONFIG, hash_password, verify_password
 from .schemas import api_error
 
 router = APIRouter()
+
+INDEX_HTML = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 
 class LoginBody(BaseModel):
@@ -57,3 +62,46 @@ def me(request: Request):
     if not token or not auth.token_valid(token):
         raise api_error(401, "not_signed_in", "Sign in required.")
     return {"admin": True}
+
+
+# --- login link: /login?token=… or /?token=… (root-level, see app.py) ---------
+
+link_router = APIRouter()
+
+_NO_LEAK = {
+    "Referrer-Policy": "no-referrer",   # the token must not travel onward
+    "Cache-Control": "no-store",
+}
+
+
+def _link_login(request: Request, token: str) -> RedirectResponse:
+    ip = request.client.host if request.client else "unknown"
+    try:
+        auth.login_limiter.check(ip)
+    except HTTPException:
+        audit.insert("auth.login", "auth", target=ip, outcome="failed",
+                     detail={"method": "login_link", "reason": "rate limited"})
+        return RedirectResponse("/#/login", status_code=303, headers=_NO_LEAK)
+    if not loginlink.verify(token):
+        auth.login_limiter.record_failure(ip)
+        audit.insert("auth.login", "auth", target=ip, outcome="failed",
+                     detail={"method": "login_link", "reason": "invalid token"})
+        return RedirectResponse("/#/login", status_code=303, headers=_NO_LEAK)
+    auth.login_limiter.reset(ip)
+    # Redirect to a clean URL so the token leaves the address bar and history.
+    response = RedirectResponse("/#/overview", status_code=303, headers=_NO_LEAK)
+    auth.set_session_cookie(response, auth.make_token())
+    audit.insert("auth.login", "auth", target=ip, outcome="ok", detail={"method": "login_link"})
+    return response
+
+
+@link_router.get("/login", include_in_schema=False)
+def login_link(request: Request, token: str = ""):
+    return _link_login(request, token)
+
+
+@link_router.get("/", include_in_schema=False)
+def root(request: Request, token: str = ""):
+    if token:
+        return _link_login(request, token)
+    return FileResponse(INDEX_HTML)
