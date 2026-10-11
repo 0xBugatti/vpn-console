@@ -38,6 +38,7 @@ ADMIN_PASSWORD=<choose-a-long-password>
 #VPNCONSOLE_SESSION_SECRET=<openssl rand -hex 32>
 # Optional — uvicorn port (8090 default; host network, so no mapping needed):
 #VPNCONSOLE_PORT=8090
+#VPNCONSOLE_BIND=127.0.0.1   # local only (default); 0.0.0.0 = all interfaces
 EOF
 chmod 600 .env
 docker compose up -d --build
@@ -143,7 +144,7 @@ Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 Volume=/var/log/journal:/var/log/journal:ro
 Volume=/run/log/journal:/run/log/journal:ro
 Volume=vpn-console-data:/data
-Exec=uvicorn server.app:app --host 0.0.0.0 --port 8090
+Exec=uvicorn server.app:app --host 127.0.0.1 --port 8090
 
 [Service]
 Restart=unless-stopped

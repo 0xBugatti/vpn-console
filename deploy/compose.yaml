@@ -2,9 +2,12 @@
 #
 #   cd deploy && docker compose up -d --build
 #
-# network_mode: host — no port mapping applies; uvicorn binds VPNCONSOLE_PORT
-# directly on the host. Keep that port tailnet-internal (do NOT funnel it;
-# exposing the console publicly is an explicit in-app act, and this is not it).
+# network_mode: host — no port mapping applies; uvicorn binds
+# VPNCONSOLE_BIND:VPNCONSOLE_PORT directly on the host. The default bind is
+# 127.0.0.1 (local only): reach it through an SSH tunnel
+#   ssh -N -L 8091:localhost:8091 root@<server>
+# Set VPNCONSOLE_BIND=0.0.0.0 in .env only if you deliberately want it on
+# every interface (do NOT funnel it).
 name: vpn-console
 
 services:
@@ -25,7 +28,7 @@ services:
     pid: "host"
     cgroup: host
     command: >
-      uvicorn server.app:app --host 0.0.0.0 --port ${VPNCONSOLE_PORT:-8090}
+      uvicorn server.app:app --host ${VPNCONSOLE_BIND:-127.0.0.1} --port ${VPNCONSOLE_PORT:-8090}
     environment:
       # Required — compose refuses to start without it (fail loud, not quietly).
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in deploy/.env (or mount ADMIN_PASSWORD_FILE)}

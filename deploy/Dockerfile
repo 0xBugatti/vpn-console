@@ -49,4 +49,4 @@ EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"VPNCONSOLE_PORT\", \"8090\")}/', timeout=4)"
 
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["uvicorn", "server.app:app", "--host", "127.0.0.1", "--port", "8090"]
