@@ -300,7 +300,8 @@ function renderNav() {
     </div>`).join("");
 }
 
-function brandHtml() { return `<span>VPN Console</span>`; }
+// Mark: Firezone's logo (owner's choice), shown small and flat beside the wordmark.
+function brandHtml() { return `<img class="mark" src="firezone-mark.svg" width="26" height="26" alt=""><span>VPN Console</span>`; }
 
 function render() {
   clearPageTimers();

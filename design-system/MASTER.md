@@ -22,8 +22,9 @@ marks *state* and is never the accent. Dark mode is the same design re-stepped.
 ### Anti-slop rules (binding)
 
 - **No glow**: no colored outer shadows on buttons, dots, nodes or icons; no radial orbs.
-- **No invented logo**: the brand is the plain wordmark "VPN Console". The favicon is a
-  neutral ink tile with a "V", only so the browser tab is identifiable.
+- **No invented logo**: the mark is Firezone's logo (owner's choice, 2026-10-11), stored
+  verbatim as `server/static/firezone-mark.svg`. It is used flat (no shadow or glow) at
+  26px beside the "VPN Console" wordmark, 32px on sign-in, and as the favicon.
 - **Shadow only for things that float** (dialogs, drawers, toasts, ⌘K palette). Panels
   and tiles sit on the page: border only.
 - **Accent is scarce**: never on nav state, meters, wires, counts or hover fills. Active
