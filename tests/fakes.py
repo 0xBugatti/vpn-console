@@ -30,7 +30,6 @@ class FakeCloud:
         self.devices: list[dict[str, Any]] = _load("tailscale/devices.json")["devices"]
         self.users: list[dict[str, Any]] = _load("tailscale/users.json")["users"]
         self.acl_text: str = (FIXTURES / "tailscale/acl.hujson").read_text()
-        self.tailnet_name = _load("tailscale/tailnet.json")["name"]
         self.created_keys: list[dict[str, Any]] = []
         self._broken = False
         self.fail_next = False
@@ -49,9 +48,9 @@ class FakeCloud:
             raise ConnectionError("fake cloud unreachable")
 
     # -- reads ----------------------------------------------------------------
-    def tailnet(self) -> dict[str, Any]:
+    def dns_preferences(self) -> dict[str, Any]:
         self._check()
-        return {"name": self.tailnet_name, "magicDNSEnabled": True}
+        return {"magicDNS": True}
 
     def list_devices(self) -> list[dict[str, Any]]:
         self._check()

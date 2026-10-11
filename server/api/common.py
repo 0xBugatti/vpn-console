@@ -54,7 +54,7 @@ def all_health() -> dict[str, dict[str, Any]]:
     # Active probe (FR-053): the health endpoint re-checks each subsystem with a
     # cheap call, so recovery is visible immediately instead of after the next
     # page poll. A failed probe leaves the last-good cache untouched.
-    _cloud_cache.get("probe", ttl=0.0, fetch=cloud().tailnet)
+    _cloud_cache.get("probe", ttl=0.0, fetch=cloud().dns_preferences)
     _local_cache.get("probe", ttl=0.0, fetch=local().status)
     _host_cache.get("probe", ttl=0.0, fetch=host().units)
     return {

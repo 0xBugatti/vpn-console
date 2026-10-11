@@ -61,9 +61,11 @@ class TailscaleCloud:
             return Result(None, Health(UNAVAILABLE, f"{type(exc).__name__}: {exc}", self.cache.last_ok))
 
     # --- cached reads (10 s/60 s TTLs applied by callers via cache) --------
+    # Note: Tailscale retired GET /tailnet/{tailnet} (now 405 method_not_allowed);
+    # tailnet-level info lives in subresources (settings, dns/*) or on devices.
 
-    def tailnet(self) -> dict[str, Any]:
-        return self._request("GET", f"/tailnet/{self.tailnet_id}")
+    def dns_preferences(self) -> dict[str, Any]:
+        return self._request("GET", f"/tailnet/{self.tailnet_id}/dns/preferences")
 
     def list_devices(self) -> list[dict[str, Any]]:
         data = self._request("GET", f"/tailnet/{self.tailnet_id}/devices")

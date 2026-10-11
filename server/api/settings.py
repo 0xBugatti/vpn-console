@@ -99,13 +99,23 @@ def change_password(request: Request, body: dict[str, Any] = Body(...)) -> dict[
 def test_ts() -> dict[str, Any]:
     """Reachability + scope probe (research D3) — never returns the credential."""
     try:
-        data = common.cloud().tailnet()
+        devices = common.cloud().list_devices()
+        dns = common.cloud().dns_preferences()
     except Exception as exc:  # noqa: BLE001 — the failure IS the answer here
         return {"ok": False, "error": str(exc)[:300]}
+    # GET /tailnet/{id} is retired (405): the tailnet's DNS name is the suffix
+    # of any device's MagicDNS name, e.g. device "mac.fangorn.example.com."
+    # → tailnet "fangorn.example.com".
+    name = CONFIG.tailnet if CONFIG.tailnet != "-" else ""
+    for dev in devices:
+        parts = str(dev.get("name") or "").rstrip(".").split(".", 1)
+        if len(parts) == 2 and parts[1]:
+            name = parts[1]
+            break
     return {
         "ok": True,
-        "tailnet": data.get("name") or CONFIG.tailnet,
-        "magic_dns": bool(data.get("magicDNSEnabled")),
+        "tailnet": name or "unknown",
+        "magic_dns": bool(dns.get("magicDNS")),
         "source": _token_view()["ts_token_source"],
     }
 
