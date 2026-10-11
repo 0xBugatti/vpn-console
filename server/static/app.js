@@ -2,6 +2,9 @@
    health polling, ⌘K palette. Pages registered in PAGES below (one per section).
    Design system: design-system/MASTER.md (binding). */
 import { icon, osIcon } from "./icons.js";
+// Pages import these from here (one-module convention) — without this
+// re-export every page module fails to load and the app renders blank.
+export { icon, osIcon };
 import { renderProfiles } from "./pages/profiles.js";
 import { renderDevices, searchDevices } from "./pages/devices.js";
 import { renderOverview } from "./pages/overview.js";
