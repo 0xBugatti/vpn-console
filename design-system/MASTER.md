@@ -1,8 +1,9 @@
 # vpn-console Design System — MASTER
 
-**Direction**: 12 · Quiet Cloud HQ ("quiet chrome" — the Linear/Stripe school)
-**Status**: Ratified 2026-10-10 by owner pick from the 20-direction gallery
-**Source gallery**: `mockups/twenty-directions.html` (board 12) · UX rules: `../research/vpn-dashboard-ux.md` · Requirements: `../specs/001-unified-vpn-dashboard/spec.md`
+**Direction**: D · Topology, orange accent
+**Status**: Ratified 2026-10-11 by owner pick (replaces 12 · Quiet Cloud HQ, ratified 2026-10-10)
+**Source**: restyle comparison (directions A Signal · B Fieldnote · C Rack · D Topology); owner chose D with orange in place of cobalt
+**Implementation**: `server/static/styles.css` (tokens are binding) · UX rules: `../research/vpn-dashboard-ux.md`
 
 Every screen MUST conform to this file. Deviations require an override file in
 `design-system/overrides/<page>.md` stating what and why — never inline one-offs.
@@ -11,10 +12,10 @@ Every screen MUST conform to this file. Deviations require an override file in
 
 ## 1. Design thesis
 
-Calm, confident, dense-when-needed. White cards on a cool near-white ground, hairline
-borders, one indigo accent, semantic color reserved for meaning. The dashboard is an
-instrument, not a showpiece: quiet chrome, generous padding discipline, `⌘K` everywhere.
-Dark mode is the same design re-stepped, not inverted.
+Airy and modern: white panels with soft shadows on a cool off-white ground, generous
+radii, one orange accent. The orange marks *where you are and what you can do* (active
+nav, primary buttons, focus, meters, the network-path wires). Semantic color marks *state*
+and is never the accent. Dark mode is the same design re-stepped, not inverted.
 
 ## 2. Tokens
 
@@ -22,150 +23,48 @@ Dark mode is the same design re-stepped, not inverted.
 
 | Token | Value | Use |
 |---|---|---|
-| `--bg` | `#F7F8FA` | app ground |
-| `--surface` | `#FFFFFF` | cards, tables, drawers, dialogs |
-| `--surface-2` | `#F1F3F6` | hovered rows, inset wells, code blocks |
-| `--border` | `#E5E8EC` | 1px card/table separators |
-| `--border-strong` | `#D3D8E0` | inputs, interactive outlines |
-| `--text` | `#0F172A` | primary ink |
-| `--text-muted` | `#64748B` | secondary ink, labels |
-| `--accent` | `#4F46E5` | primary actions, active nav, links, focus |
-| `--accent-hover` | `#4338CA` | |
-| `--accent-soft` | `rgba(79,70,229,.09)` | active-nav fill, selected rows |
-| `--info` | `#0EA5E9` | tailnet-scoped exposures, informational |
-| `--success` | `#16A34A` | healthy states |
-| `--warning` | `#D97706` | caution (expiring, pending, stale) |
-| `--danger` | `#DC2626` | errors, expired, internet-facing |
-| `--ring` | `rgba(79,70,229,.35)` | focus ring halo |
+| `--bg` | `#F6F7F9` | app ground |
+| `--surface` | `#FFFFFF` | cards, tables, drawers, dialogs, sidebar |
+| `--surface-2` | `#F2F4F7` | table headers, wells, search field |
+| `--surface-3` | `#E9EDF2` | segmented-tab track, meter track |
+| `--border` / `--border-strong` | `#E4E7EC` / `#D0D5DD` | separators / inputs |
+| `--text` / `--muted` / `--faint` | `#101828` / `#475467` / `#667085` | ink levels (all ≥4.5:1 on white) |
+| `--accent` | `#EA580C` | marks: active icons, focus ring, meters, wires |
+| `--accent-strong` | `#CC4A0C` | primary button fill + link text (white text ≥4.5:1) |
+| `--accent-soft` | `#FFF1E8` | active nav background, selected rows |
+| ok / warn / err / info | `#12A150` / `#D4A20B` / `#E5484D` / `#2E6FD8` | dots, bars |
+| `*-text` variants | `#0E7A3D` / `#8A6800` / `#C4232F` / `#2559B0` | semantic text on light |
 
-### Dark (theme toggle; equal first-class citizen)
+Warning is **mustard**, not amber: it must stay ~25° of hue away from the orange accent
+so a "Due" pill never reads as a brand mark.
 
-| Token | Value |
-|---|---|
-| `--bg` | `#0F1117` |
-| `--surface` | `#161922` |
-| `--surface-2` | `#1D212D` |
-| `--border` | `#262B38` |
-| `--border-strong` | `#333A4C` |
-| `--text` | `#E6E8EF` |
-| `--text-muted` | `#8B90A0` |
-| `--accent` | `#818CF8` |
-| `--accent-hover` | `#A5ACFA` |
-| `--accent-soft` | `rgba(129,140,248,.13)` |
-| `--info` | `#38BDF8` |
-| `--success` | `#2FBF71` |
-| `--warning` | `#F5A524` |
-| `--danger` | `#EF4444` |
-| `--ring` | `rgba(129,140,248,.4)` |
+### Dark
 
-### Type
+`--bg #0E1014`, `--surface #15181E`, `--surface-2 #1C2027`, accent `#FF8A4C` (button
+text uses `--accent-ink #1A0B02`), semantics re-stepped brighter. Applied both under
+`prefers-color-scheme: dark` (theme = System) and `[data-theme="dark"]`.
 
-| Role | Face | Notes |
-|---|---|---|
-| Display / headings / tile values | **Manrope** 600–800 | `-0.01em` tracking; page title 20px/700 |
-| Body / UI | **Inter** 400–600 | base 14px; table body 13px; line-height 1.5 |
-| Data / mono | **Geist Mono** 400–500 | IPs, hostnames, IDs, timestamps, search queries, log lines; `tabular-nums` in numeric columns |
+### Shape and type
 
-Scale: 11 (chips/labels, `+0.1em` uppercase for micro-labels) · 12.5 (secondary) · 13 (tables) ·
-14 (body) · 16 (section titles) · 20 (page title) · 26 (tile values).
+- Radii: card 16px · item/input 10px · pill 999px. Controls are 38px tall (`.sm` 32px).
+- Shadow: `--shadow-card` on cards/tiles; `--shadow-overlay` on dialogs, drawers, toasts.
+- Type: **Schibsted Grotesk** (UI + display), **JetBrains Mono** (addresses, units, versions,
+  audit actions). Both vendored in `server/static/fonts/` — no runtime font CDN.
+- Scale: h1 26 · h2 15 · body 14 · labels/meta 12.5 · eyebrow 10.5 uppercase +0.09em.
 
-### Surface & space
+## 3. Layout rules
 
-- Radius: **12px** cards/drawers/dialogs · **8px** inputs/buttons/chips-pill · **999px** pills.
-- Shadow: `0 1px 2px rgba(15,23,42,.05), 0 8px 24px -14px rgba(15,23,42,.14)` on floating
-  layers only (drawer, dialog, dropdown) — flat cards carry borders, not shadows.
-- Spacing: 4px base; card padding 16–20px; page gutter 24px; table rows 42–46px.
-- Motion: 150–200ms ease-out on hover/focus/press; drawer 220ms slide; **no** decorative
-  animation; respect `prefers-reduced-motion`.
-- Icons: Lucide SVG, 1.5px stroke, 16px inline / 18px nav. Never emoji as icons.
+- Sidebar grouped by domain: Overview · **OpenVPN** · **Tailnet** · **This host** · **Admin**.
+- Top bar: page name · search (⌘K) · subsystem health as dot + label (dots only on phones).
+- Overview order: Network path (public → host → Tailscale / OpenVPN tunnels) → five stat
+  tiles (equal height, values never wrap) → Needs attention | Recent activity.
+- Grids collapse: 5 tiles → 3 (≤1240px) → 2 (≤900px) → 1 (≤340px); splits stack ≤1080px;
+  sidebar becomes an off-canvas drawer ≤900px. No horizontal page scroll at any width;
+  wide tables scroll inside their own wrapper.
+- Tabs are segmented controls (white thumb on a `--surface-3` track).
+- Filter fields are full-width search fields with the icon inside the field.
 
-## 3. Status system (binding — spec FR-052)
+## 4. Status language (unchanged)
 
-Status is **always icon/dot + text label**, never color alone. Only these five states:
-
-| State | Token | Dot/icon | Label | Examples |
-|---|---|---|---|---|
-| Healthy | `--success` | ● | `Online` `Valid` `Running` `Applied` | device online, cert > 14d |
-| Info/tailnet | `--info` | ◐ globe icon | `Tailnet` | Serve/Taildrive entries |
-| Caution | `--warning` | ● triangle | `Expiring in 6d` `Needs approval` `Stale` | ≤ 14d expiries, pending routes, restarts |
-| Error/internet | `--danger` | ● octagon | `Expired` `Failed` `Parse error` `Public` | expired certs/keys, failed units, **Funnel** |
-| Inert | `--text-muted` | ○ | `Offline` `Disabled` `Unexposed` | offline devices, disabled profiles |
-
-Red appears ONLY on error/internet-facing states; the Exposures tile's public count is the
-one red number on Overview. Severity striping uses tinted backgrounds at 8–10% of the state
-color, never saturated fills. Chips: 11px mono, 1px state-tinted border, transparent fill.
-
-## 4. Components
-
-**Buttons** — `Primary` (accent fill, white text) for the one main action per view
-(`Import profiles`, `Apply policy`); `Secondary` (surface fill, 1px border) for the rest;
-`Danger` (danger fill, white) only inside destructive dialogs; `Ghost` (no fill) for row
-actions. Row-level dangerous actions live behind a `⋯` menu — never naked red icon buttons.
-
-**Inputs & search** — 36px, 8px radius, `--border-strong` border, focus = 2px `--ring`
-halo. The global search accepts `key:value` tokens (`os:` `tag:` `is:expiring` `!` negation);
-rendered query tokens as mono chips with an ✕ each; `⌘K` opens the command palette.
-
-**Tables** — the page. Surface card, hairline row separators, 42–46px rows, header row in
-11px mono uppercase muted. Status column first, name second, `⋯` menu last. Sort on click;
-filters as saved-query chip row above; count + refresh state in the table footer
-("23 devices · updated 4s ago"). `tabular-nums` for dates/IPs. Copy-on-click cells flash
-a ✓ and toast nothing.
-
-**Stat tiles** — label (11 mono uppercase muted) / value (26 Manrope 700, secondary part
-in muted 13px) / sub-row of chips. Click-through to the filtered list. Badge chips on
-top-right when attention is needed.
-
-**Drawer** (profile/device detail) — right-side, 480px, surface, 24px padding, slides
-220ms; header = name (editable) + status chip + close; sections separated by hairlines;
-actions pinned in the footer bar.
-
-**Dialogs — friction tiers (spec FR-051)** — Confirm modal: specific body naming the
-target and consequence, outcome-labeled buttons (`Delete profile` / `Keep it`), no default
-focus. Type-to-confirm: input must match the target name / `DELETE` before the danger
-button enables; used for delete device, bulk delete, tailscaled disconnect (adds the
-self-lockout warning + "I am connected via LAN" checkbox), danger zone. No confirm at all
-for undoable local ops — those get **toasts**: bottom-left, 10s, neutral with green dot,
-`Undo` button; failures red with `Retry`.
-
-**Command palette** (`⌘K`) — fuzzy jump-to-page/action/profile/device; lists recent
-actions; `↵` runs, `esc` closes.
-
-**Empty states** — one sentence of explanation + exactly one primary CTA ("No profiles
-yet. Drop `.ovpn` files here or **Import**."). Attention queue empty = "All clear."
-
-**Health banner** — per-subsystem: reachable (no banner), stale ("Tailscale API
-unreachable — showing data from 2 min ago", warning tint, mutations disabled), unavailable
-(danger tint, empty panel with Retry).
-
-## 5. Shell
-
-Left sidebar 224px: brand dot + `vpn-console`; the ten sections in spec order (Overview,
-Profiles, Devices, Access Control, Local Node, Exposures, Services, Logs, Audit Log,
-Settings) with Lucide icons + count pills; active = `--accent-soft` fill + accent text +
-3px left indicator; admin chip + health dots pinned bottom. Topbar 52px: search (flex-1,
-max 420px), subsystem health dots (`ts api · local · host`), theme toggle, sign out.
-Content column max 1240px. Responsive: sidebar collapses to icon rail < 1024px, hidden
-behind hamburger < 720px; tables scroll horizontally inside their card; nothing else
-changes order.
-
-Page rhythm: title row → **attention/action block** → tables/tiles → secondary. Overview
-order is fixed by spec FR-030.
-
-## 6. Accessibility & pre-delivery checklist
-
-Text contrast ≥ 4.5:1 (large 3:1) in BOTH themes · visible `:focus-visible` ring on every
-interactive element · hit targets ≥ 36px (44px on touch) · status never color-alone ·
-`aria-label` on icon-only controls · tables have real `<th>` scope · live regions announce
-toast/health changes · reduced-motion honored · keyboard path for every action including
-dialogs (focus trap + `esc`) · tabular data readable at 375px via in-card scroll.
-
-Pre-delivery: no emoji icons · cursor:pointer on clickables · 150–300ms transitions ·
-4.5:1 in light AND dark · visible focus · reduced-motion · 375/768/1024/1440 checked ·
-live data labeled with update time and stale state.
-
-## 7. Overrides
-
-Per-page exceptions go in `design-system/overrides/<page>.md` — what, why, and the
-master rule it bends. No page may redefine tokens, status semantics, or friction tiers;
-those are constitutional (Principles III & IV, V).
+State is always dot + label, never color alone. Red is reserved for broken or
+internet-facing (Funnel). Blue (info) marks tailnet scope.

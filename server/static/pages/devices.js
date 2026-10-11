@@ -131,7 +131,7 @@ function drawRows(root) {
       : `${fmtDate(d.key_expiry)} <span class="faint small">${relTime(d.key_expiry)}</span>`;
     return `<tr data-id="${d.id}" class="${d.online ? "" : "dim"}">
       <td>${status(kind, label)}</td>
-      <td><span class="os">${osIcon(d.os)}</span> <strong>${esc(d.hostname || d.name)}</strong>
+      <td><span class="os" title="${esc(d.os_label)}">${icon(osIcon(d.os), 16)}</span> <strong>${esc(d.hostname || d.name)}</strong>
           <div class="tagline">${d.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div></td>
       <td class="small">${esc(d.user || "—")}</td>
       <td><button class="addr" data-copy="${esc(d.addresses[0] || "")}" title="Copy address">${esc(d.addresses[0] || "—")}</button></td>
@@ -159,7 +159,7 @@ export async function openDevicesDrawer(root, did) {
   const scrim = h(`<div class="drawer-scrim"></div>`);
   const drawer = h(`<aside class="drawer" role="dialog" aria-modal="true" aria-label="${esc(d.hostname)}">
     <header>
-      <span class="os">${osIcon(d.os)}</span>
+      <span class="os" title="${esc(d.os_label)}">${icon(osIcon(d.os), 16)}</span>
       <h2>${esc(d.hostname || d.name)}</h2>
       ${status(...DEVICE_STATUS(d))}
       <button class="btn ghost sm" data-close aria-label="Close">${icon("x", 15)}</button>

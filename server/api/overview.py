@@ -165,7 +165,12 @@ def overview() -> dict[str, Any]:
             exposures=exp_rows, policy_errors=_policy_errors(),
         ),
         "tiles": {
-            "node": {"state": (local or {}).get("BackendState", "unknown")},
+            "node": {
+                "state": (local or {}).get("BackendState", "unknown"),
+                "host": ((local or {}).get("Self") or {}).get("HostName", ""),
+                "version": ((local or {}).get("Version") or "").split("-")[0],
+                "tailnet": ((local or {}).get("MagicDNSSuffix") or "").rstrip("."),
+            },
             "devices": {
                 "online": sum(1 for d in device_rows if d["online"]),
                 "total": len(device_rows),

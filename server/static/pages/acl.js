@@ -8,7 +8,7 @@ const state = { applied: "", draft: null, pinned: false, structured: [], errors:
 
 const KIND_LABEL = {
   groups: "Groups", tagOwners: "Tag owners", hosts: "Hosts",
-  acls: "Access rules", nodeAttrs: "Node attributes",
+  acls: "Access rules (legacy)", grants: "Grants", ipsets: "IP sets", nodeAttrs: "Node attributes",
 };
 
 export async function renderAcl(root) {

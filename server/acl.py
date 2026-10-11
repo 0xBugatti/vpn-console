@@ -10,9 +10,13 @@ from __future__ import annotations
 import json
 import re
 
+# Top-level keys of the current Tailscale policy file (grants + ipsets are
+# what the default policy now ships with; acls is the legacy syntax).
 _KNOWN_SECTIONS = {
-    "acls", "groups", "tagOwners", "hosts", "nodeAttrs", "tests", "ssh",
-    "autoApprovers", "dnsConfig", "ipPrefixRules",
+    "acls", "grants", "groups", "tagOwners", "hosts", "ipsets", "nodeAttrs",
+    "tests", "sshTests", "ssh", "autoApprovers", "postures", "defaultSrcPosture",
+    "derpMap", "disableIPv4", "OneCGNATRoute", "randomizeClientPort",
+    "attrConfig", "dnsConfig", "ipPrefixRules",
 }
 
 _COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
@@ -159,6 +163,12 @@ def structured(parsed: dict) -> list[dict]:
         out.append({"kind": "tagOwners", "name": tag, "items": list(owners)})
     for name, address in (parsed.get("hosts") or {}).items():
         out.append({"kind": "hosts", "name": name, "items": [str(address)]})
+    for name, members in (parsed.get("ipsets") or {}).items():
+        out.append({"kind": "ipsets", "name": name, "items": [str(m) for m in members]})
+    for rule in parsed.get("grants") or []:
+        reach = [str(x) for x in (rule.get("ip") or [])] + list((rule.get("app") or {}).keys())
+        out.append({"kind": "grants", "name": ", ".join(rule.get("src") or []),
+                    "items": [f"{d} ({', '.join(reach) or 'any'})" for d in rule.get("dst") or []]})
     for rule in parsed.get("acls") or []:
         out.append({"kind": "acls", "name": ", ".join(rule.get("src") or []),
                     "items": list(rule.get("dst") or [])})

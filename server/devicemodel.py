@@ -57,7 +57,8 @@ def device_view(device: dict, fleet_max_version: str,
     expiry_state = key_expiry_state(
         device.get("keyExpiry") or "", bool(device.get("expiryDisabled")), now
     )
-    online = bool(device.get("online"))
+    # Live API: connectedToControl (needs ?fields=all); "online" kept for old recordings
+    online = bool(device.get("connectedToControl", device.get("online")))
     subnet_routes = [r for r in approved if r not in ("0.0.0.0/0", "::/0")]
     is_server = SERVER_TAG in tags or not (device.get("user") or "")  # data-model rule
     return {
@@ -66,9 +67,9 @@ def device_view(device: dict, fleet_max_version: str,
         "hostname": device.get("hostname") or "",
         "os": (device.get("os") or "").lower(),
         "os_label": device.get("os") or "unknown",
-        "version": device.get("version") or "",
+        "version": _version(device),
         "client_version": device.get("clientVersion") or "",
-        "version_stale": version_stale(device.get("version") or "", fleet_max_version),
+        "version_stale": version_stale(_version(device), fleet_max_version),
         "user": device.get("user") or "",
         "tags": tags,
         "addresses": list(device.get("addresses") or []),
@@ -93,16 +94,24 @@ def device_view(device: dict, fleet_max_version: str,
             "expiring": expiry_state in ("expiring", "expired"),
             "expired": expiry_state == "expired",
             "external": bool(device.get("isExternal")),
-            "stale": version_stale(device.get("version") or "", fleet_max_version),
+            "stale": version_stale(_version(device), fleet_max_version),
         },
     }
+
+
+def _version(device: dict) -> str:
+    """Short client version: the live API sends only clientVersion
+    ("1.104.1-t7f4efe814-g8da…"); older recordings carry "version"."""
+    raw = device.get("version") or device.get("clientVersion") or ""
+    return raw.split("-")[0]
 
 
 def fleet_max_version(devices: list[dict]) -> str:
     best = (0, 0, 0)
     best_str = ""
     for device in devices:
-        parsed = _parse_ver(device.get("version") or "")
+        version = _version(device)
+        parsed = _parse_ver(version)
         if parsed and parsed > best:
-            best, best_str = parsed, device["version"]
+            best, best_str = parsed, version
     return best_str

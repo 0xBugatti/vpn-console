@@ -36,10 +36,16 @@ class TailscaleCloud:
             )
         return {"Authorization": f"Bearer {self.token}"}
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def _raw(self, method: str, path: str, headers: dict[str, str] | None = None,
+             **kwargs: Any) -> httpx.Response:
         url = f"{BASE}{path}"
-        resp = self.client.request(method, url, headers=self._headers(), timeout=TIMEOUT, **kwargs)
+        resp = self.client.request(method, url, headers={**self._headers(), **(headers or {})},
+                                   timeout=TIMEOUT, **kwargs)
         resp.raise_for_status()
+        return resp
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        resp = self._raw(method, path, **kwargs)
         if resp.status_code == 204 or not resp.content:
             return {}
         return resp.json()
@@ -68,7 +74,9 @@ class TailscaleCloud:
         return self._request("GET", f"/tailnet/{self.tailnet_id}/dns/preferences")
 
     def list_devices(self) -> list[dict[str, Any]]:
-        data = self._request("GET", f"/tailnet/{self.tailnet_id}/devices")
+        # fields=all is what carries connectedToControl (online) and routes
+        data = self._request("GET", f"/tailnet/{self.tailnet_id}/devices",
+                             params={"fields": "all"})
         return data.get("devices", [])
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -76,9 +84,11 @@ class TailscaleCloud:
         return data.get("users", [])
 
     def get_acl_text(self) -> str:
-        data = self._request("GET", f"/tailnet/{self.tailnet_id}/acl")
-        acl = data.get("acls")
-        return acl if isinstance(acl, str) else ""
+        # The policy file is HuJSON (comments, trailing commas) — ask for it
+        # verbatim; the default JSON rendering would strip the comments.
+        resp = self._raw("GET", f"/tailnet/{self.tailnet_id}/acl",
+                         headers={"Accept": "application/hujson"})
+        return resp.text
 
     # --- mutations (contracts/api.md friction enforced at the API layer) ---
 
@@ -115,7 +125,9 @@ class TailscaleCloud:
         )
 
     def put_acl_text(self, text: str) -> None:
-        self._request("POST", f"/tailnet/{self.tailnet_id}/acl", json={"acls": text})
+        self._raw("POST", f"/tailnet/{self.tailnet_id}/acl",
+                  headers={"Content-Type": "application/hujson", "Accept": "application/hujson"},
+                  content=text.encode("utf-8"))
 
     def create_auth_key(self, reusable: bool = False, expiry_seconds: int = 600,
                         ephemeral: bool = False, tags: list[str] | None = None) -> str:

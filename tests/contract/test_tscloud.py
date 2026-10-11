@@ -90,12 +90,30 @@ def test_acl_round_trip_preserves_bytes(T_ACL_FIXTURE=None):
     seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        # live API: HuJSON in, HuJSON out (application/hujson both ways)
         if request.method == "GET":
-            return httpx.Response(200, json={"acls": hujson})
-        seen["put"] = json.loads(request.content)["acls"]
-        return httpx.Response(200, json={})
+            assert request.headers["accept"] == "application/hujson"
+            return httpx.Response(200, text=hujson,
+                                  headers={"content-type": "application/hujson"})
+        assert request.headers["content-type"] == "application/hujson"
+        seen["put"] = request.content.decode()
+        return httpx.Response(200, text=hujson,
+                              headers={"content-type": "application/hujson"})
 
     cloud = make_adapter(handler)
     assert cloud.get_acl_text() == hujson
     cloud.put_acl_text(hujson)
     assert seen["put"] == hujson  # byte-identical incl. comments
+
+
+
+def test_devices_request_all_fields_for_online_state():
+    """connectedToControl (online) only comes back with ?fields=all."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["fields"] = request.url.params.get("fields", "")
+        return httpx.Response(200, json={"devices": []})
+
+    make_adapter(handler).list_devices()
+    assert seen["fields"] == "all"

@@ -212,7 +212,7 @@ export function applyTheme(pref) {
 applyTheme(localStorage.getItem("vc_theme") || "system");
 
 /* ---------- health polling (topbar dots, FR-003) ---------- */
-const HEALTH_LABELS = { tscloud: "Tailnet", tslocal: "Node", host: "Host" };
+const HEALTH_LABELS = { tscloud: "Tailnet API", tslocal: "tailscaled", host: "systemd" };
 let healthTimer = null;
 
 function healthKind(state) {
@@ -279,13 +279,28 @@ function currentRoute() {
   return { name: PAGES[name] ? name : "overview", rest, raw: hash };
 }
 
+// Sidebar groups follow the product's three domains (+ admin).
+const NAV_GROUPS = [
+  { label: "", pages: ["overview"] },
+  { label: "OpenVPN", pages: ["profiles"] },
+  { label: "Tailnet", pages: ["devices", "acl", "exposures"] },
+  { label: "This host", pages: ["node", "services", "logs"] },
+  { label: "Admin", pages: ["audit", "settings"] },
+];
+
 function renderNav() {
   const nav = $("#nav");
-  nav.innerHTML = NAV_ORDER.map((key) => {
-    const page = PAGES[key];
-    return `<a class="nav-item" data-nav="${key}" href="#/${key}">${icon(page.icon, 16)}<span>${esc(page.title)}</span><span class="count" data-count="${key}"></span></a>`;
-  }).join("");
+  nav.innerHTML = NAV_GROUPS.map((g) => `
+    <div class="nav-group">
+      ${g.label ? `<div class="nav-label">${esc(g.label)}</div>` : ""}
+      ${g.pages.map((key) => {
+        const page = PAGES[key];
+        return `<a class="nav-item" data-nav="${key}" href="#/${key}">${icon(page.icon, 17)}<span>${esc(page.title)}</span><span class="count" data-count="${key}"></span></a>`;
+      }).join("")}
+    </div>`).join("");
 }
+
+function brandHtml() { return `<span class="mark">${icon("acl", 17)}</span><span>VPN Console</span>`; }
 
 function render() {
   clearPageTimers();
@@ -306,21 +321,24 @@ function renderShell() {
   <a class="skip-link" href="#page">Skip to content</a>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand">VPN<span class="dot">·</span>Console</div>
+      <div class="brand">${brandHtml()}</div>
       <nav id="nav" aria-label="Sections"></nav>
       <div class="spacer"></div>
-      <div class="sidebar-footer">internal · single admin</div>
+      <div class="sidebar-footer">
+        <div class="who"><b>Admin</b><span>single-admin console</span></div>
+        <button class="btn ghost sm" id="signout" title="Sign out" aria-label="Sign out">${icon("logout", 16)}</button>
+      </div>
     </aside>
     <div class="main">
       <header class="topbar">
         <button class="btn ghost sm menu-btn" data-menu aria-label="Menu">${icon("menu", 16)}</button>
         <span class="kicker" id="crumb"></span>
         <div class="spacer"></div>
-        <label class="search" title="Search (⌘K)">${icon("search", 15)}
-          <input id="global-q" placeholder="Search — ⌘K">
+        <label class="search" title="Search (⌘K)">${icon("search", 16)}
+          <input id="global-q" placeholder="Search devices, profiles, units">
+          <kbd>⌘K</kbd>
         </label>
         <div class="health-dots" aria-label="Subsystem health"></div>
-        <button class="btn ghost sm" id="signout" title="Sign out">${icon("logout", 15)}</button>
       </header>
       <main class="content" id="page" tabindex="-1"></main>
     </div>
@@ -342,7 +360,18 @@ function renderShell() {
     if (e.key === "Enter") { handoffSearch($("#global-q").value); $("#global-q").value = ""; }
   };
   startHealthPolling();
+  fillNavCounts();
   render();
+}
+
+// Seed sidebar counts on load; the Profiles/Devices pages refresh them later.
+async function fillNavCounts() {
+  try {
+    const { tiles } = await api("/overview");
+    const set = (key, n) => { const el = $(`[data-count='${key}']`); if (el && !el.textContent) el.textContent = n || ""; };
+    set("profiles", tiles.profiles.total);
+    set("devices", tiles.devices.total);
+  } catch { /* counts are a convenience */ }
 }
 
 /* ---------- login (US1) ---------- */
@@ -350,8 +379,9 @@ function renderLogin(message = "") {
   $("#app").innerHTML = `
   <div class="login-wrap">
     <form class="login-card" id="login-form">
-      <div class="brand">VPN<span class="dot">·</span>Console</div>
-      <p class="sub">Sign in to manage profiles, devices, and this server.</p>
+      <div class="brand">${brandHtml()}</div>
+      <h1>Sign in</h1>
+      <p class="sub">Manage OpenVPN profiles, tailnet devices and this server.</p>
       <p class="form-error" id="login-err">${esc(message)}</p>
       <div class="field">
         <label for="pw">Admin password</label>

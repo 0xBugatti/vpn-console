@@ -15,30 +15,31 @@ export async function renderOverview(root) {
     <h1>Overview</h1>
     <div class="qa-row" id="qa-row"></div>
   </div>
-  <p class="page-sub">Everything that needs you, in one place — the rest can wait.</p>
+  <p class="page-sub" id="ov-sub">Everything that needs you, in one place.</p>
   <div id="ov-banner"></div>
 
-  <section class="card" id="attention-card">
-    <h2>Needs attention</h2>
-    <div id="attention-list" aria-live="polite"></div>
+  <section class="card" id="path-card">
+    <div class="card-head"><h2>Network path</h2><span class="meta">How traffic reaches this host</span></div>
+    <div class="netpath" id="netpath"><div class="skeleton" style="height:64px;grid-column:1/-1"></div></div>
   </section>
 
-  <div class="stat-row" id="tiles"></div>
+  <div class="stat-row" id="tiles" style="margin-top:18px"></div>
 
-  <section class="card" id="ips-card" hidden>
-    <h2>Server addresses</h2>
-    <div id="ips-rows" class="ip-rows"></div>
-  </section>
-
-  <section class="card">
-    <h2>Recent activity</h2>
-    <div class="table-wrap">
-      <table class="table" id="recent-table">
-        <thead><tr><th>When</th><th>Action</th><th>Target</th><th>Result</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>`;
+  <div class="split" style="margin-top:18px">
+    <section class="card" id="attention-card">
+      <div class="card-head"><h2>Needs attention</h2><span class="meta" id="attention-count"></span></div>
+      <div id="attention-list" class="attention" aria-live="polite"></div>
+    </section>
+    <section class="card" style="padding:0">
+      <div class="card-head" style="padding:20px 20px 0"><h2>Recent activity</h2><a class="meta" href="#/audit">Audit log</a></div>
+      <div class="table-wrap" style="border:0;box-shadow:none;border-radius:0 0 var(--radius-card) var(--radius-card)">
+        <table class="table" id="recent-table">
+          <thead><tr><th>When</th><th>Action</th><th>Target</th><th>Result</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>`;
 
   drawQuickActions();
   await loadOverview(root);
@@ -51,32 +52,63 @@ async function loadOverview(root, silent = false) {
   catch (err) { if (!silent) toast(errorText(err), "error"); return; }
 
   $("#ov-banner", root).innerHTML = worstBanner(data);
+  $("#ov-sub", root).textContent = `Everything that needs you, in one place · refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  drawPath(data);
   drawAttention(data.attention);
   drawTiles(data.tiles, data.attention, data.vpn_services);
-  drawIps(data.ips);
   drawRecent(data.recent);
 }
 
-/* ---------- server addresses ---------- */
-function drawIps(ips) {
-  const tunnels = ips?.openvpn || [];
-  const rows = [
-    ["Public IPv4", ips?.public],
-    ["Tailscale IP", ips?.tailscale],
-    ...tunnels.map((t) => [
-      tunnels.length > 1 ? `OpenVPN (${t.iface})` : "OpenVPN tunnel", t.addr,
-    ]),
-  ].filter(([, v]) => v);
-  if (!rows.length) return;
-  const card = $("#ips-card");
-  card.hidden = false;
-  $("#ips-rows", card).innerHTML = rows.map(([label, value]) => `
-    <div class="ip-row">
-      <span class="label">${esc(label)}</span>
-      <code class="mono">${esc(value)}</code>
-      <button class="btn ghost sm" data-copy="${esc(value)}" title="Copy ${esc(label)}">${icon("copy", 13)} Copy</button>
-    </div>`).join("");
-  $$("button[data-copy]", card).forEach((b) => {
+/* ---------- network path: internet → this host → tailnet / tunnels ---------- */
+function addr(value) {
+  return `<span class="addr-line"><code>${esc(value)}</code><button class="np-copy" data-copy="${esc(value)}" title="Copy ${esc(value)}" aria-label="Copy ${esc(value)}">${icon("copy", 13)}</button></span>`;
+}
+
+function drawPath(data) {
+  const ips = data.ips || {};
+  const node = data.tiles.node || {};
+  const dev = data.tiles.devices;
+  const tsUp = node.state === "Running";
+  const tunnels = ips.openvpn || [];
+  const ovpn = data.vpn_services?.openvpn;
+
+  const branches = [`
+    <div class="np-node${tsUp ? "" : " down"}">
+      <small>Tailscale${node.tailnet ? ` · ${esc(node.tailnet)}` : ""}</small>
+      ${ips.tailscale ? addr(ips.tailscale) : `<b>${esc(node.state || "unknown")}</b>`}
+      <span class="sub">tailscale0 · ${dev.online} of ${dev.total} devices online</span>
+    </div>`];
+  if (tunnels.length) {
+    for (const t of tunnels) branches.push(`
+      <div class="np-node">
+        <small>OpenVPN · ${esc(t.iface)}</small>
+        ${addr(t.addr)}
+        <span class="sub">client tunnel up</span>
+      </div>`);
+  } else {
+    branches.push(`
+      <div class="np-node down">
+        <small>OpenVPN</small>
+        <b>No tunnel</b>
+        <span class="sub">${ovpn && ovpn.state !== "not-found" ? "service present, no tun interface" : "service not installed"}</span>
+      </div>`);
+  }
+
+  const host = $("#netpath");
+  host.innerHTML = `
+    <div class="np-node">
+      <small>Internet · public</small>
+      ${ips.public ? addr(ips.public) : "<b>unknown</b>"}
+    </div>
+    <div class="np-wire${ips.public ? "" : " idle"}"></div>
+    <div class="np-node host">
+      <small>This host</small>
+      <b>${esc(node.host || "this server")}</b>
+      <span class="sub">${node.version ? `tailscaled ${esc(node.version)}` : "tailscaled"}</span>
+    </div>
+    <div class="np-wire${tsUp || tunnels.length ? "" : " idle"}"></div>
+    <div class="np-branches">${branches.join("")}</div>`;
+  $$("button[data-copy]", host).forEach((b) => {
     b.onclick = () => copyText(b.dataset.copy, "Address copied");
   });
 }
@@ -92,18 +124,20 @@ function worstBanner(data) {
 function drawAttention(items) {
   const host = $("#attention-list");
   if (!items.length) {
+    $("#attention-count").textContent = "";
     host.innerHTML = `<div class="all-clear">
-      <p>All clear — nothing needs your attention right now.</p>
-      <a class="btn primary sm" href="#/profiles">${icon("upload", 15)} Import profiles</a>
+      <p>All clear. Nothing needs your attention right now.</p>
+      <a class="btn sm" href="#/profiles">${icon("upload", 15)} Import profiles</a>
     </div>`;
     return;
   }
+  $("#attention-count").textContent = `${items.length} item${items.length === 1 ? "" : "s"}`;
   host.innerHTML = items.map((it, i) => {
     const [kind, label] = SEV[it.severity] || ["warn", "Due"];
     const a = it.inline_action || {};
     const actionBtn = a.method === "POST"
-      ? `<button class="btn ghost sm" data-inline="${i}">${esc(a.label)}</button>`
-      : `<a class="btn ghost sm" href="${esc(a.href || it.target_href)}">${esc(a.label)}</a>`;
+      ? `<button class="btn sm" data-inline="${i}">${esc(a.label)}</button>`
+      : `<a class="btn sm" href="${esc(a.href || it.target_href)}">${esc(a.label)}</a>`;
     return `<div class="attention-item ${it.severity}">
       ${status(kind, label)}
       <span class="msg">${esc(it.message)}</span>
@@ -140,6 +174,9 @@ function drawTiles(tiles, attention, vpn) {
     return hits.some((a) => a.severity === "red") ? "err"
       : hits.length ? "warn" : "";
   };
+  const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+  const meter = (n, d) => `<div class="meter" aria-hidden="true"><i style="width:${pct(n, d)}%"></i></div>`;
+  const of = (n, d) => `${n} <span class="of">/ ${d}</span>`;
   const nodeState = tiles.node.state;
 
   // VPN services tile: explicit Tailscale + OpenVPN rows, then tunnels
@@ -151,33 +188,41 @@ function drawTiles(tiles, attention, vpn) {
       const key = row.state === "active" && row.sub_state === "exited" ? "exited" : row.state;
       const [kind, label] = UNIT_SEV[key] || UNIT_SEV.unknown;
       if (kind === "err") vpnCls = "err"; else if (kind === "warn" && vpnCls !== "err") vpnCls = "warn";
-      rows.push(`<div class="tile-row"><span class="tr-name">${row.unit.startsWith("tailscaled") ? "Tailscale" : "OpenVPN"}</span> ${status(kind, label)}</div>`);
+      const name = row.unit.startsWith("tailscaled") ? "Tailscale" : "OpenVPN";
+      rows.push(`<span class="tile-row" title="${esc(name)}: ${esc(label)}">${status(kind, name)}</span>`);
     }
-    for (const t of vpn.tunnels || []) {
-      const [kind, label] = TUNNEL_SEV[t.state] || TUNNEL_SEV["not-installed"];
-      rows.push(`<div class="tile-row"><span class="tr-name" title="${esc(t.name)}">${esc(t.name)}</span> ${status(kind, label)}</div>`);
+    const tunnels = vpn.tunnels || [];
+    const up = tunnels.filter((t) => t.state === "up").length;
+    if (tunnels.length) {
+      const names = tunnels.map((t) => `${t.name}: ${(TUNNEL_SEV[t.state] || TUNNEL_SEV["not-installed"])[1]}`).join("\n");
+      rows.push(`<span class="tile-row" title="${esc(names)}">${status(up ? "ok" : "off", `${up}/${tunnels.length} profile units`)}</span>`);
     }
   }
 
+  const exp = tiles.exposures;
   const t = [
-    { icon: "node", label: "Local node", value: nodeState,
-      cls: nodeState === "Running" ? "ok" : "err", sub: "tailscaled on this host" },
-    { icon: "devices", label: "Devices", value: `${tiles.devices.online} / ${tiles.devices.total}`,
-      cls: sevFor("device."), sub: "online / total" },
-    { icon: "profiles", label: "Profiles", value: `${tiles.profiles.enabled} / ${tiles.profiles.total}`,
-      cls: sevFor("profile."), sub: "enabled / total" },
-    { icon: "globe", label: "Exposures",
-      value: `${tiles.exposures.tailnet} <span class="${tiles.exposures.public_alert ? "public-accent" : ""}">/ ${tiles.exposures.public} public</span>`,
-      cls: tiles.exposures.public_alert ? "err" : sevFor("exposure."), sub: "tailnet / public" },
-    { icon: "services", label: "VPN services", value: `${tiles.services.running} of ${tiles.services.total}`,
-      cls: vpnCls || sevFor("service."), sub: "running", rows },
+    { icon: "node", label: "Local node", value: esc(nodeState),
+      cls: nodeState === "Running" ? "ok" : "err",
+      sub: tiles.node.version ? `tailscaled ${tiles.node.version}` : "tailscaled on this host" },
+    { icon: "devices", label: "Devices", value: of(tiles.devices.online, tiles.devices.total),
+      cls: sevFor("device."), extra: meter(tiles.devices.online, tiles.devices.total), sub: "online now" },
+    { icon: "profiles", label: "Profiles", value: of(tiles.profiles.enabled, tiles.profiles.total),
+      cls: sevFor("profile."), extra: meter(tiles.profiles.enabled, tiles.profiles.total), sub: "enabled" },
+    { icon: "globe", label: "Exposures", value: String(exp.tailnet + exp.public),
+      cls: exp.public_alert ? "err" : sevFor("exposure."),
+      sub: exp.public ? `${exp.tailnet} tailnet · ${exp.public} public` : `${exp.tailnet} tailnet · nothing public`,
+      subCls: exp.public ? "public-accent" : "" },
+    { icon: "services", label: "VPN services", value: of(tiles.services.running, tiles.services.total),
+      cls: vpnCls || sevFor("service."), sub: "",
+      extra: rows.length ? `<div class="tile-rows">${rows.join("")}</div>` : "" },
   ];
   $("#tiles").innerHTML = t.map((x) => `
-    <div class="stat-tile ${x.cls}" ${x.cls === "err" ? 'data-sev="red"' : x.cls === "warn" ? 'data-sev="amber"' : ""}>
-      <span class="label">${icon(x.icon, 14)} ${esc(x.label)}</span>
+    <div class="stat-tile ${x.cls === "err" || x.cls === "warn" ? x.cls : ""}" ${x.cls === "err" ? 'data-sev="red"' : x.cls === "warn" ? 'data-sev="amber"' : ""}>
+      <span class="label">${icon(x.icon, 15)} ${esc(x.label)}</span>
       <span class="value">${x.value}</span>
-      <span class="sub">${esc(x.sub)}</span>
-      ${(x.rows || []).join("")}
+      ${x.extra && !x.extra.includes("tile-rows") ? x.extra : ""}
+      ${x.sub ? `<span class="sub ${x.subCls || ""}">${esc(x.sub)}</span>` : ""}
+      ${x.extra && x.extra.includes("tile-rows") ? x.extra : ""}
     </div>`).join("");
 }
 
