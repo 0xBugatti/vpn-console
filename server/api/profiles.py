@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, Response, UploadFile
 
-from .. import audit, ovpn
+from .. import audit, ovpn, tunnels
 from ..db import get_conn
 from ..searchlang import predicate
 from ..settings import CONFIG
@@ -105,6 +105,27 @@ def _get_row(pid: str) -> dict[str, Any]:
     return dict(row)
 
 
+def _validate_auth(profile_row: dict[str, Any], auth: Any) -> tuple[str, str]:
+    if not profile_row["has_auth_user_pass"]:
+        raise api_error(422, "auth_not_needed", "This profile does not sign in with a username and password.")
+    if not isinstance(auth, dict):
+        raise api_error(422, "bad_auth", "auth must be {username, password}.")
+    username, password = str(auth.get("username") or ""), str(auth.get("password") or "")
+    try:
+        tunnels.auth_file_text(username, password)
+    except ValueError as exc:
+        raise api_error(422, "bad_auth", str(exc).capitalize() + ".") from exc
+    return username, password
+
+
+def _set_auth(pid: str, username: str, password: str) -> None:
+    get_conn().execute(
+        "INSERT INTO profile_auth(profile_id, username, password, updated_at) VALUES(?,?,?,?) "
+        "ON CONFLICT(profile_id) DO UPDATE SET username=excluded.username, password=excluded.password, "
+        "updated_at=excluded.updated_at",
+        (pid, username, password, _now()))
+
+
 def _set_enabled(pid: str, enabled: bool) -> None:
     """Flip the enabled flag (and the stored status with it). Safe if the profile is gone."""
     try:
@@ -139,6 +160,13 @@ def _view(row: dict[str, Any], with_text: bool = False, tunnel: dict[str, Any] |
         "updated_at": row["updated_at"],
         "config_sha256": row["config_sha256"],
         "name_shared": names > 0,
+    }
+    auth_row = get_conn().execute(
+        "SELECT username FROM profile_auth WHERE profile_id=?", (row["id"],)).fetchone()
+    out["auth"] = {
+        "needed": bool(row["has_auth_user_pass"]),
+        "stored": auth_row is not None,
+        "username": auth_row["username"] if auth_row else None,
     }
     if tunnel is not None:
         out["tunnel"] = tunnel
@@ -355,6 +383,9 @@ def patch_profile(pid: str, body: dict[str, Any]):
 
     # --- checks first: nothing is changed until every one of them has passed ---------
     new_text: str | None = None
+    auth_creds: tuple[str, str] | None = None
+    if "auth" in body:
+        auth_creds = _validate_auth(row, body["auth"])
     renaming = "name" in body and body["name"] != row["name"]
     if "config_text" in body and body["config_text"] != _read_text(pid):
         new_text = body["config_text"]
@@ -369,6 +400,7 @@ def patch_profile(pid: str, body: dict[str, Any]):
         raise api_error(409, "rename_blocked",
                         "Disable the profile before renaming it: its server tunnel is named after it.")
     want = tunnel_state = analysis = None
+    auth_applied = False
     if "enabled" in body:
         if new_text is not None or renaming:
             # the tunnel is named after the profile and runs its config: one thing at a time
@@ -379,9 +411,12 @@ def patch_profile(pid: str, body: dict[str, Any]):
         tunnel_state = tunnelctl.current(row)["state"]
         tunnel_up = tunnel_state in tunnelctl.RUNNING
         if want and not tunnel_up:
-            analysis = tunnelctl.check_runnable(row, _read_text(pid))
+            analysis = tunnelctl.check_runnable(row, _read_text(pid), auth_supplied=auth_creds is not None)
             if analysis.scripts:
                 require_typed(body, row["name"], "to let this profile's scripts run as root")
+            elif analysis.auth_needed and auth_creds:
+                # a password is about to land in a root-only file on this server
+                require_typed(body, row["name"], "to store this profile's password in a root-only file on this server")
             else:
                 require_confirm(body)
         elif not want and tunnel_up:
@@ -415,6 +450,12 @@ def patch_profile(pid: str, body: dict[str, Any]):
         if want and tunnel_up:
             _set_enabled(pid, True)  # already up: nothing to start
         elif want:
+            if auth_creds:
+                _set_auth(pid, *auth_creds)
+                audit.insert("profile.auth", "profiles", target=row["name"],
+                             detail={"id": pid, "username": auth_creds[0], "at_enable": True})
+                row = _get_row(pid)
+                auth_applied = True
             notices += tunnelctl.install(row, _read_text(pid), analysis)
             _set_enabled(pid, True)
             row = _get_row(pid)
@@ -437,6 +478,16 @@ def patch_profile(pid: str, body: dict[str, Any]):
         get_conn().execute("UPDATE profiles SET name=? WHERE id=?", (new_name, pid))
         audit.insert("profile.rename", "profiles", target=new_name,
                      detail={"id": pid, "from": row["name"]})
+        row = _get_row(pid)
+
+    if auth_creds is not None and not auth_applied:
+        _set_auth(pid, *auth_creds)
+        audit.insert("profile.auth", "profiles", target=row["name"],
+                     detail={"id": pid, "username": auth_creds[0]})
+        if tunnelctl.has_installed(row):
+            sync = tunnelctl.resync(row, _read_text(pid), restart=False,
+                                    on_unsafe=lambda: _set_enabled(pid, False))
+            notices += sync.get("notices", [])
         row = _get_row(pid)
 
     if "tags" in body:

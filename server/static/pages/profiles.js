@@ -446,6 +446,49 @@ const findingList = (list) => `<ul class="plan-lines">${list.map((f) =>
   `<li><span class="mono">${esc(f.text)}</span><span class="faint small"> line ${f.line_no}: ${esc(f.why)}</span></li>`
 ).join("")}</ul>`;
 
+/* Collects a username and password (and, when a password is about to land on the server for
+   the first time, the typed profile name). Resolves {username, password} or null. */
+function authDialog({ title, body, username = "", needPhrase = "", confirmLabel = "Save" }) {
+  return new Promise((resolve) => {
+    const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
+      <div class="dialog">
+        <h2>${esc(title)}</h2>
+        <div class="body">${body}
+          <div class="field"><label>Username</label>
+            <input class="input" data-user autocomplete="off" spellcheck="false" value="${esc(username)}"></div>
+          <div class="field"><label>Password</label>
+            <input class="input" type="password" data-pass autocomplete="new-password"></div>
+          ${needPhrase ? `<div class="field"><label>Type <strong class="mono">${esc(needPhrase)}</strong> to confirm</label>
+            <input class="input" data-phrase autocomplete="off" spellcheck="false"></div>` : ""}
+        </div>
+        <div class="btn-row">
+          <button class="btn ghost" data-no>Cancel</button>
+          <button class="btn ${needPhrase ? "danger" : "primary"}" data-yes ${needPhrase ? "disabled" : ""}>${esc(confirmLabel)}</button>
+        </div>
+      </div>
+    </div>`);
+    document.body.appendChild(scrim);
+    const user = $("[data-user]", scrim), pass = $("[data-pass]", scrim), phrase = $("[data-phrase]", scrim);
+    const yes = $("[data-yes]", scrim);
+    const ready = () => user.value.trim() && pass.value && (!needPhrase || phrase.value.trim() === needPhrase);
+    const gate = () => { yes.disabled = !ready(); };
+    [user, pass, phrase].filter(Boolean).forEach((el) => (el.oninput = gate));
+    let done = false;
+    const close = (v) => {
+      if (done) return;
+      done = true;
+      scrim.remove();
+      restore();
+      resolve(v ? { username: user.value.trim(), password: pass.value } : null);
+    };
+    const restore = trapKeys(scrim, () => close(null));
+    $("[data-no]", scrim).onclick = () => close(null);
+    yes.onclick = () => ready() && close(true);
+    scrim.onclick = (e) => { if (e.target === scrim) close(null); };
+    user.focus();
+  });
+}
+
 /* A failed request, in a dialog: these messages name lines and files, so a toast is too brief. */
 function problem(title, err) {
   const list = err?.detail?.findings?.length ? findingList(err.detail.findings) : "";
@@ -457,6 +500,7 @@ function planBody(p, plan) {
   return `<p>Starts a tunnel from this server${where ? ` to <span class="mono">${esc(where)}</span>` : ""}
       and starts it again after a reboot, once it has connected.</p>
     <ul class="plan-list">${plan.notices.map((n) => `<li>${esc(n)}</li>`).join("")}
+      ${plan.auth?.needed ? `<li>Signs in${plan.auth.username ? ` as <span class="mono">${esc(plan.auth.username)}</span>` : ""} with a username and password kept in a root-only file on this server, never inside the config.</li>` : ""}
       <li>If the server has not answered within ${esc(String(plan.wait_seconds))} seconds, the tunnel is stopped and nothing is left running.</li></ul>
     <p class="small faint">Service <span class="mono">${esc(plan.unit)}</span>, interface
       <span class="mono">${esc(plan.iface)}</span>, config
@@ -554,14 +598,30 @@ async function enableProfile(root, p) {
   }
   const scripts = plan.needs_typed_confirm;
   const body = planBody(p, plan);
-  const ok = scripts
+  let creds = null;
+  if (plan.auth?.source === "missing") {
+    // the password is about to land in a root-only file on this server, so the profile
+    // name is typed as part of the same dialog
+    creds = await authDialog({
+      title: `Enable ${p.name}`,
+      body: body + `<p>This profile signs in with a username and password. They will be kept in a root-only
+          file on this server and the config only points at it.</p>`,
+      username: plan.auth.username || "",
+      needPhrase: p.name,
+      confirmLabel: "Enable and save password",
+    });
+    if (!creds) return false;
+  }
+  const ok = creds !== null || (scripts
     ? await typeConfirmDialog({ title: `Enable ${p.name} and run its scripts?`, body, phrase: p.name, confirmLabel: "Enable and run scripts" })
-    : await confirmDialog({ title: `Enable ${p.name}?`, body, confirmLabel: "Enable and start tunnel" });
+    : await confirmDialog({ title: `Enable ${p.name}?`, body, confirmLabel: "Enable and start tunnel" }));
   if (!ok) return false;
   try {
     const data = await api(`/profiles/${p.id}`, {
       method: "PATCH",
-      body: { enabled: true, confirm: true, ...(scripts ? { typed_confirm: p.name } : {}) },
+      body: { enabled: true, confirm: true,
+              ...((scripts || creds) ? { typed_confirm: p.name } : {}),
+              ...(creds ? { auth: creds } : {}) },
     });
     pending.set(p.id, "Starting");
     await load(root);
@@ -569,6 +629,7 @@ async function enableProfile(root, p) {
     else pending.delete(p.id);
     return true;
   } catch (err) {
+    if (err.code === "tunnel_needs_auth") { toast(errorText(err), "info"); return enableProfile(root, p); }
     await problem(`Could not enable ${p.name}`, err);
     await load(root);
     return false;
@@ -675,6 +736,8 @@ export async function openProfilesDrawer(root, pid) {
         <div class="tunnel-box" data-tunnel-box><p class="faint small" style="margin:0">Checking the server…</p></div>
         <div class="progress-line" data-tunnel-progress hidden role="status"></div>
       </div>
+
+      <div class="field" data-credentials hidden></div>
 
       <div class="field">
         <label>Tags</label>
@@ -792,7 +855,9 @@ export async function openProfilesDrawer(root, pid) {
           <dt>Interface</dt><dd class="mono">${esc(t.iface)}</dd>
           <dt>After a reboot</dt><dd>${t.boot ? "Reconnects by itself" : "Stays off"}</dd>
         </dl>
-        ${log ? `<pre class="log-tail" tabindex="0">${esc(log)}</pre>` : ""}`;
+        ${log ? `<pre class="log-tail" tabindex="0">${esc(log)}</pre>` : ""}
+        ${t.state === "failed" && p.auth?.needed
+          ? `<p class="hint">If the server rejected this login, the password may have changed. Set it again below, then start the tunnel.</p>` : ""}`;
     }
   };
   const refreshTunnel = async () => {
@@ -805,6 +870,39 @@ export async function openProfilesDrawer(root, pid) {
   };
   drawFooter();
   refreshTunnel();
+
+  /* --- credentials for profiles that sign in --- */
+  const credsField = $("[data-credentials]", drawer);
+  const drawCreds = () => {
+    if (!p.auth?.needed) { credsField.hidden = true; return; }
+    credsField.hidden = false;
+    const line = p.auth.stored
+      ? `Signs in as <span class="mono">${esc(p.auth.username)}</span>. The password is hidden.`
+      : "Not set yet. Enable asks for them, or set them here first.";
+    credsField.innerHTML = `
+      <label>Credentials</label>
+      <p class="muted small" style="margin:0 0 8px">${line} Kept in a root-only file on this
+        server; never inside the config, the editor, or a share link.</p>
+      <button class="btn sm" data-creds-set>${p.auth.stored ? "Change username or password" : "Set username and password"}</button>`;
+    $("[data-creds-set]", credsField).onclick = async () => {
+      const creds = await authDialog({
+        title: p.auth.stored ? `Change the password for ${p.name}` : `Set the password for ${p.name}`,
+        body: `<p>${p.auth.stored
+          ? "The tunnel uses the new password the next time it connects."
+          : "Needed before this profile can run as a tunnel on this server."}</p>`,
+        username: p.auth.username || "",
+        confirmLabel: "Save password",
+      });
+      if (!creds) return;
+      try {
+        const data = await api(`/profiles/${p.id}`, { method: "PATCH", body: { auth: creds } });
+        p = { ...p, ...data.profile };
+        drawCreds();
+        toast("Password saved. The tunnel uses it the next time it connects.", "success");
+      } catch (err) { await problem("Could not save the password", err); }
+    };
+  };
+  drawCreds();
 
   /* A running tunnel is restarted by a save or a revert, so those ask first (the server insists too). */
   const confirmed = async (send, spec) => {

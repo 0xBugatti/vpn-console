@@ -287,6 +287,7 @@ class FakeHost:
         self.action_log: list[tuple[str, str]] = []
         # --- server tunnels (openvpn-client@<name>) ---
         self.tunnel_files: dict[str, str] = {}          # installed copies, by instance
+        self.auth_files: dict[str, str] = {}            # credential files, by instance
         self.tunnel_dir_ok = True                       # False = the folder is not mounted
         self.failing_actions: set[str] = set()          # actions that raise, e.g. {"enable"}
         self.tunnel_outcome = "active"                  # what a start does: active | pending | failed | activating
@@ -324,11 +325,11 @@ class FakeHost:
     def tunnel_read(self, instance: str) -> str | None:
         return self.tunnel_files.get(instance)
 
-    def tunnel_write(self, instance: str, text: str) -> None:
+    def tunnel_write(self, instance: str, text: str, suffix: str = ".conf") -> None:
         self._check()
         if not self.tunnel_dir_ok:
             raise FileNotFoundError("the tunnel folder is not mounted (fake)")
-        self.tunnel_files[instance] = text
+        (self.auth_files if suffix == ".auth" else self.tunnel_files)[instance] = text
 
     def routes(self) -> list[dict[str, str]]:
         self._check()

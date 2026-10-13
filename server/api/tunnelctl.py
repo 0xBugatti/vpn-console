@@ -19,6 +19,7 @@ from typing import Any
 
 from .. import audit, jobs, ovpn, tunnels
 from ..db import get_conn
+from ..settings import CONFIG
 from . import common
 from .schemas import api_error
 
@@ -110,6 +111,28 @@ def is_running(row: dict[str, Any]) -> bool:
         return False
 
 
+# ---------------------------------------------------------------- credentials
+
+def stored_creds(pid: str) -> tuple[str, str] | None:
+    row = get_conn().execute("SELECT username, password FROM profile_auth WHERE profile_id=?",
+                             (pid,)).fetchone()
+    return (row["username"], row["password"]) if row else None
+
+
+def auth_source(row: dict[str, Any], analysis: tunnels.Analysis) -> str | None:
+    """Where a signing profile's credentials come from: "stored" (set in the console, wins),
+    "inline" (inside the profile, lifted out on install) or "missing" (Enable collects them)."""
+    if not analysis.auth_needed:
+        return None
+    return "stored" if stored_creds(row["id"]) else ("inline" if analysis.inline_creds else "missing")
+
+
+def auth_view(row: dict[str, Any], analysis: tunnels.Analysis) -> dict[str, Any]:
+    source = auth_source(row, analysis)
+    creds = stored_creds(row["id"]) if source == "stored" else analysis.inline_creds
+    return {"needed": source is not None, "source": source, "username": creds[0] if creds else None}
+
+
 # ---------------------------------------------------------------- what would happen
 
 def _finding(f: tunnels.Finding) -> dict[str, Any]:
@@ -119,8 +142,12 @@ def _finding(f: tunnels.Finding) -> dict[str, Any]:
 def plan(row: dict[str, Any], text: str) -> dict[str, Any]:
     """What enabling this profile would do, for the confirm dialog."""
     analysis = tunnels.analyze(text)
-    _, notices = tunnels.render(text, row["id"], analysis)
     instance, unit_id, iface = names(row)
+    auth = auth_view(row, analysis)
+    _, notices = tunnels.render(text, row["id"], analysis,
+                                auth_path=_auth_path(instance) if auth["needed"] else None)
+    if auth["source"] == "missing":
+        notices = notices + ["This profile signs in with a username and password that are not set yet."]
     try:
         available = common.host().tunnel_available()
     except Exception:  # noqa: BLE001
@@ -138,13 +165,14 @@ def plan(row: dict[str, Any], text: str) -> dict[str, Any]:
         "scripts": [_finding(f) for f in analysis.scripts],
         "stripped": [_finding(f) for f in analysis.stripped],
         "default_route": [_finding(f) for f in analysis.default_route_lines],
+        "auth": auth,
         "needs_typed_confirm": bool(analysis.scripts),
         "wait_seconds": int(WAIT_SECONDS),
         "notices": notices,
     }
 
 
-def check_runnable(row: dict[str, Any], text: str) -> tunnels.Analysis:
+def check_runnable(row: dict[str, Any], text: str, auth_supplied: bool = False) -> tunnels.Analysis:
     """Refuse a profile that cannot run unattended on this server, naming the reason."""
     if row["parse_error"]:
         raise api_error(422, "tunnel_refused", f"This profile cannot be parsed ({row['parse_error']}).", findings=[])
@@ -155,11 +183,19 @@ def check_runnable(row: dict[str, Any], text: str) -> tunnels.Analysis:
         lines = "; ".join(f"line {f.line_no}: {f.text} ({f.why})" for f in analysis.refused[:3])
         raise api_error(422, "tunnel_refused", f"This profile cannot run as a server tunnel. {lines}",
                         findings=[_finding(f) for f in analysis.refused])
+    if analysis.auth_needed and auth_source(row, analysis) == "missing" and not auth_supplied:
+        raise api_error(422, "tunnel_needs_auth",
+                        "This profile signs in with a username and password. Set them first, then enable it.")
     return analysis
 
 
 def _profile_exists(pid: str) -> bool:
     return get_conn().execute("SELECT 1 FROM profiles WHERE id=?", (pid,)).fetchone() is not None
+
+
+def _auth_path(instance: str) -> str:
+    """Where OpenVPN ON THE HOST finds the credentials file (not the container's mount)."""
+    return f"{CONFIG.tunnel_host_dir}/{tunnels.auth_file_name(instance)}"
 
 
 def install(row: dict[str, Any], text: str, analysis: tunnels.Analysis) -> list[str]:
@@ -179,8 +215,23 @@ def install(row: dict[str, Any], text: str, analysis: tunnels.Analysis) -> list[
         if host.unit_state(unit_id)["state"] in ("active", "running", "activating"):
             raise api_error(409, "tunnel_name_taken",
                             f'A tunnel from a deleted profile is still running as "{instance}". Stop it on the Services page first.')
-    conf, notices = tunnels.render(text, row["id"], analysis)
+    auth = auth_view(row, analysis)
+    auth_path = _auth_path(instance) if auth["needed"] else None
+    conf, notices = tunnels.render(text, row["id"], analysis, auth_path=auth_path)
     host.tunnel_write(instance, conf)
+    if auth["needed"]:
+        creds = stored_creds(row["id"]) or analysis.inline_creds
+        if not creds:
+            raise api_error(422, "tunnel_needs_auth",
+                            "This profile signs in with a username and password. Set them first, then enable it.")
+        try:
+            host.tunnel_write(instance, tunnels.auth_file_text(*creds), suffix=".auth")
+        except ValueError as exc:
+            raise api_error(422, "tunnel_refused",
+                            f"The credentials cannot be written to a file ({exc}).", findings=[]) from exc
+        where = "the username and password stored in the console" if auth["source"] == "stored" \
+            else "the username and password inside the profile"
+        notices.append(f"Wrote {where} to a root-only file: {auth_path}.")
     return notices
 
 
@@ -337,6 +388,8 @@ def resync(row: dict[str, Any], new_text: str, restart: bool, on_unsafe: Callabl
     if analysis.refused:
         f = analysis.refused[0]
         return {"applied": False, "reason": f"The new config cannot run as a server tunnel (line {f.line_no}: {f.text}), so the installed copy was left as it is."}
+    if analysis.auth_needed and auth_source(row, analysis) == "missing":
+        return {"applied": False, "reason": "The new config signs in with a username and password that are not set yet, so the installed copy was left as it is."}
     installed = host.tunnel_read(instance) or ""
     approved = {f.text for f in tunnels.analyze(installed).scripts}
     fresh = [f for f in analysis.scripts if f.text not in approved]

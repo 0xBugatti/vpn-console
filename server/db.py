@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS profiles (
     updated_at    TEXT NOT NULL
 );
 
+-- Username and password for profiles that sign in (owner decision: stored plain like the
+-- .ovpn files). Only ever written to the server's root-only <name>.auth file on enable.
+CREATE TABLE IF NOT EXISTS profile_auth (
+    profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    username   TEXT NOT NULL,
+    password   TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS share_links (
     token      TEXT PRIMARY KEY,
     profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,

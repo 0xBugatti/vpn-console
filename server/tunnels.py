@@ -91,6 +91,10 @@ class Analysis:
     findings: list[Finding] = field(default_factory=list)
     inline_blocks: set[str] = field(default_factory=set)
     dev: str = "tun"
+    # <auth-user-pass> block: its line span in the profile and the credentials inside it
+    # (line 1 username, line 2 password, the way OpenVPN reads it).
+    inline_auth_span: tuple[int, int] | None = None
+    inline_creds: tuple[str, str] | None = None
 
     def of(self, kind: str) -> list[Finding]:
         return [f for f in self.findings if f.kind == kind]
@@ -111,6 +115,14 @@ class Analysis:
     def default_route_lines(self) -> list[Finding]:
         return self.of("default_route")
 
+    @property
+    def auth_lines(self) -> list[Finding]:
+        return self.of("auth")
+
+    @property
+    def auth_needed(self) -> bool:
+        return bool(self.auth_lines or self.inline_creds)
+
 
 def split_lines(text: str) -> list[str]:
     """Split the way OpenVPN does (on newlines only), so line numbers agree everywhere."""
@@ -127,6 +139,8 @@ def _tokens(line: str) -> list[str]:
 def analyze(text: str) -> Analysis:
     out = Analysis()
     block: str | None = None
+    auth_buf: list[str] = []
+    auth_span: tuple[int, int] | None = None
     for no, raw in enumerate(split_lines(text), 1):
         stripped = raw.strip()
         tag = _TAG.match(stripped)
@@ -135,12 +149,22 @@ def analyze(text: str) -> Analysis:
             if name == "connection":  # holds ordinary directives, so it is not skipped
                 continue
             if closing:
+                if block == "auth-user-pass" and auth_span:
+                    out.inline_auth_span = (auth_span[0], no)  # through the closing tag
+                    out.inline_creds = _parse_inline_auth(auth_buf)
                 block = None
             else:
                 block = name
                 out.inline_blocks.add(name)
+                if name == "auth-user-pass":
+                    auth_buf, auth_span = [], (no, no)
             continue
-        if block or not stripped or stripped[0] in "#;":
+        if block:
+            if block == "auth-user-pass" and auth_span:
+                auth_buf.append(raw)
+                auth_span = (auth_span[0], no)
+            continue
+        if not stripped or stripped[0] in "#;":
             continue
         tokens = _tokens(stripped)
         if not tokens:
@@ -163,8 +187,13 @@ def analyze(text: str) -> Analysis:
         elif d in STRIP_DIRECTIVES:
             add("strip", "writes a file or opens a control port")
         elif d == "auth-user-pass":
-            if "auth-user-pass" not in out.inline_blocks:
-                add("refuse", "needs a username and password, and a tunnel started at boot has nobody to type them")
+            if args and args[0] != "[inline]":
+                add("refuse", "points at a credentials file the console did not write; "
+                              "add the username and password in the console instead")
+            else:
+                # signs in with a username and password: fine to run unattended once the
+                # credentials are in the console's root-only file (see render)
+                add("auth", "signs in with a username and password")
         elif d in FILE_DIRECTIVES:
             inline_ref = bool(args) and args[0] == "[inline]"
             if args and not inline_ref and not (d == "dh" and args[0] == "none"):
@@ -180,11 +209,23 @@ def analyze(text: str) -> Analysis:
 
 # ---------------------------------------------------------------- the installed copy
 
-def render(text: str, profile_id: str, analysis: Analysis | None = None) -> tuple[str, list[str]]:
-    """The tunnel-only copy written to the server, plus the notices to show about it."""
+def render(text: str, profile_id: str, analysis: Analysis | None = None,
+           auth_path: str | None = None) -> tuple[str, list[str]]:
+    """The tunnel-only copy written to the server, plus the notices to show about it.
+
+    auth_path: the host path of the root-only credentials file, for a profile that signs in
+    with a username and password. The credentials then live ONLY in that file — an inline
+    <auth-user-pass> block is lifted out of the config — so no installed copy ever carries
+    a password (owner decision: one consistent mechanism, 2026-10-13)."""
     analysis = analysis or analyze(text)
     iface = iface_name(profile_id)
     removed = {f.line_no: f for f in analysis.stripped + analysis.default_route_lines}
+    if auth_path:
+        removed.update({f.line_no: f for f in analysis.auth_lines})
+        if analysis.inline_auth_span:
+            for no in range(analysis.inline_auth_span[0], analysis.inline_auth_span[1] + 1):
+                removed.setdefault(no, Finding(no, "", "auth-user-pass", "auth",
+                                               "credentials moved to the console's file"))
     out = [marker_line(profile_id),
            "# Rewritten whenever the profile is enabled or edited in vpn-console. Do not edit here."]
     for no, line in enumerate(split_lines(text), 1):
@@ -206,9 +247,14 @@ def render(text: str, profile_id: str, analysis: Analysis | None = None) -> tupl
         'pull-filter ignore "route-ipv6 8000::/1"',
         'pull-filter ignore "dhcp-option"',
     ]
+    if auth_path:
+        out.append(f"auth-user-pass {auth_path}")
     if not analysis.scripts:
         out.append("script-security 1")  # belt and braces: no user script can run
     notices = ["Tunnel-only: a pushed default route or DNS setting is ignored, so SSH, nginx and Tailscale keep working."]
+    if auth_path:
+        notices.append("The username and password are kept in a root-only file the config points at; "
+                       "they are never written into the config itself.")
     if analysis.default_route_lines:
         notices.append("Default-route lines were commented out of the installed copy: "
                        + "; ".join(f.text for f in analysis.default_route_lines[:3]) + ".")
@@ -216,6 +262,29 @@ def render(text: str, profile_id: str, analysis: Analysis | None = None) -> tupl
         notices.append("Removed from the installed copy (your stored profile is unchanged): "
                        + "; ".join(f.text for f in analysis.stripped[:4]) + ".")
     return "\n".join(out) + "\n", notices
+
+
+# ---------------------------------------------------------------- credentials file
+
+def _parse_inline_auth(lines: list[str]) -> tuple[str, str] | None:
+    """(username, password) from an inline block: line 1 username, line 2 password."""
+    if len(lines) < 2:
+        return None
+    user, password = lines[0].strip(), lines[1].strip()
+    return (user, password) if user and password else None
+
+
+def auth_file_text(username: str, password: str) -> str:
+    """The two lines OpenVPN reads as username and password. Raises on anything that would
+    break the file format (empty, embedded newline, absurd length)."""
+    for label, value in (("username", username), ("password", password)):
+        if not value or "\n" in value or "\r" in value or len(value) > 256:
+            raise ValueError(f"invalid {label}")
+    return f"{username}\n{password}\n"
+
+
+def auth_file_name(instance: str) -> str:
+    return f"{instance}.auth"
 
 
 # ---------------------------------------------------------------- routes (safety check)

@@ -99,7 +99,11 @@ Valid, Expiring, Expired, Disabled or Parse error. A certificate badge (Expired,
 sits next to the date so a Disabled profile cannot hide a lapsed certificate.
 
 Enable and Disable act on the real machine, so they always open a confirm dialog. Scripts
-in a profile raise it to type-to-confirm with the profile name. A slow action shows one
+in a profile raise it to type-to-confirm with the profile name, and so does the first
+Enable of a profile that signs in with a username and password: the Enable dialog collects
+the credentials in the same step (a password is landing in a root-only file on the server),
+with the username prefilled when the console already holds one. Credentials have their own
+small section in the drawer; the password itself is never shown anywhere. A slow action shows one
 flat progress line above the table (and inside the drawer for a save or revert); its
 outcome is a toast when it worked and a dialog when it did not, because failures name
 lines and log output that a 4 s toast cannot hold.

@@ -28,7 +28,8 @@ remote-cert-eku "TLS Web Server Authentication"
 
 def kinds(text: str) -> dict[str, list[str]]:
     a = tunnels.analyze(text)
-    return {k: [f.directive for f in a.of(k)] for k in ("refuse", "script", "strip", "default_route") if a.of(k)}
+    return {k: [f.directive for f in a.of(k)]
+            for k in ("refuse", "script", "strip", "default_route", "auth") if a.of(k)}
 
 
 # --------------------------------------------------------------- names
@@ -88,14 +89,50 @@ def test_lines_that_write_files_or_open_ports_are_stripped():
     assert kinds(text)["strip"] == ["log", "status", "writepid", "management", "daemon"]
 
 
-def test_username_password_profiles_are_refused_unless_credentials_are_inline():
-    assert kinds(PROFILE + "auth-user-pass\n")["refuse"] == ["auth-user-pass"]
+def test_username_password_profiles_sign_in_through_the_consoles_file():
+    # a bare directive or [inline] marks the profile as signing in; a path to a file the
+    # console did not write is still refused
+    assert kinds(PROFILE + "auth-user-pass\n")["auth"] == ["auth-user-pass"]
+    assert kinds(PROFILE + "auth-user-pass [inline]\n")["auth"] == ["auth-user-pass"]
     assert kinds(PROFILE + "auth-user-pass /root/creds\n")["refuse"] == ["auth-user-pass"]
-    inline = PROFILE + "auth-user-pass\n<auth-user-pass>\nu\np\n</auth-user-pass>\n"
-    # the directive comes BEFORE the block here, so order matters: block first is the supported form
-    assert "refuse" in kinds(inline)
-    ok = PROFILE + "<auth-user-pass>\nu\np\n</auth-user-pass>\nauth-user-pass\n"
-    assert "refuse" not in kinds(ok)
+    assert kinds(PROFILE + "auth-user-pass /root/creds\n").get("auth") is None
+
+
+def test_an_inline_auth_block_is_found_with_its_credentials():
+    text = PROFILE + "<auth-user-pass>\nmyuser\nmypassword\n</auth-user-pass>\nauth-user-pass\n"
+    a = tunnels.analyze(text)
+    assert a.auth_needed and a.inline_creds == ("myuser", "mypassword")
+    lo = len(PROFILE.splitlines()) + 1
+    assert a.inline_auth_span == (lo, lo + 3)  # block, user, password, closing tag
+    broken = PROFILE + "<auth-user-pass>\nonly-a-username\n</auth-user-pass>\n"
+    assert tunnels.analyze(broken).inline_creds is None and tunnels.analyze(broken).auth_needed is False
+
+
+def test_render_lifts_the_credentials_out_of_the_config():
+    text = PROFILE + "<auth-user-pass>\nu\np\n</auth-user-pass>\nauth-user-pass\n"
+    a = tunnels.analyze(text)
+    conf, notices = tunnels.render(text, "abc123", a, auth_path="/etc/openvpn/client/corp.auth")
+    lines = conf.splitlines()
+    assert "auth-user-pass /etc/openvpn/client/corp.auth" in lines
+    live = [l for l in lines if not l.startswith("#")]               # comments may quote what was removed
+    assert not any(l.strip().startswith(("<auth-user-pass>", "</auth-user-pass>")) for l in live)
+    assert not any(l.strip() in ("u", "p") for l in live)            # the credentials are not in the config
+    assert not any(l.strip() == "auth-user-pass" for l in live)      # no bare directive either
+    assert "# [vpn-console] removed (auth): <auth-user-pass>" in conf
+    assert any("root-only file" in n for n in notices)
+
+
+def test_render_without_an_auth_path_keeps_the_directive_for_the_plan():
+    conf, _ = tunnels.render(PROFILE + "auth-user-pass\n", "abc123")
+    assert "auth-user-pass\n" in conf  # nothing is claimed until credentials exist
+
+
+def test_auth_file_text_is_two_clean_lines():
+    assert tunnels.auth_file_text("u", "p") == "u\np\n"
+    import pytest as _pytest
+    for bad in (("", "p"), ("u", ""), ("u\nextra", "p"), ("u", "p\r"), ("u" * 257, "p")):
+        with _pytest.raises(ValueError):
+            tunnels.auth_file_text(*bad)
 
 
 def test_file_references_are_refused_but_inline_and_dh_none_are_fine():

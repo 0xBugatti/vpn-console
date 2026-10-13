@@ -455,13 +455,20 @@ on a scratch instance.
   after it connects the tunnel is stopped and disabled if any of its routes replaces the
   default route or overlaps an existing route (this server's own network, Docker,
   Tailscale, or a tunnel started by hand).
-- **FR-012c**: Enable MUST refuse a profile that cannot run unattended (username and
-  password, files outside the profile, expired certificate, parse error) and say which
-  line is the reason. A profile with script lines (`up`, `down`, `route-up`, `plugin`,
-  `tls-verify`, `script-security 2` or higher) MUST list those lines and require the
-  profile name to be typed. Lines that write files or open ports (`log`, `status`,
-  `writepid`, `management`, `daemon`, `chroot`) MUST be removed from the installed copy
-  with a notice; the stored profile is never changed.
+- **FR-012c**: Enable MUST refuse a profile that cannot run unattended (files outside the
+  profile, expired certificate, parse error) and say which line is the reason. A profile
+  that signs in with a username and password MUST keep those credentials in a root-only
+  file next to the installed config (`<name>.auth`, mode 0600) that the config points at:
+  an inline `<auth-user-pass>` block MUST be lifted into that file rather than left in the
+  config, and a profile with no credentials anywhere MUST collect them in the Enable dialog
+  (typing the profile name, because a password is landing on the server) or be refused with
+  a reason the dialog can act on. Credentials set in the console take precedence over ones
+  inside the profile; the stored profile is never modified; and the password MUST NOT
+  appear in any API response, the config editor, or the audit log. A profile with script
+  lines (`up`, `down`, `route-up`, `plugin`, `tls-verify`, `script-security 2` or higher)
+  MUST list those lines and require the profile name to be typed. Lines that write files or
+  open ports (`log`, `status`, `writepid`, `management`, `daemon`, `chroot`) MUST be removed
+  from the installed copy with a notice.
 - **FR-012d**: Enable MUST show progress while the tunnel connects (up to about 100 s) and
   report the tunnel address, or the last log lines if it did not come up. A tunnel counts
   as connected only when its interface has an address (OpenVPN tells systemd it is ready

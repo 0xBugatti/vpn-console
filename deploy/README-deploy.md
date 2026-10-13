@@ -40,6 +40,9 @@ ADMIN_PASSWORD=<choose-a-long-password>
 #VPNCONSOLE_PORT=8090
 #VPNCONSOLE_BIND=127.0.0.1   # local only (default); 0.0.0.0 = all interfaces
 #VPNCONSOLE_TUNNEL_DIR=/host-openvpn-client   # where Enable installs tunnel configs (mount of /etc/openvpn/client)
+#VPNCONSOLE_TUNNEL_HOST_DIR=/etc/openvpn/client  # that folder's path ON THE HOST: profiles that
+#                                              # sign in with a username and password get a root-only
+#                                              # <name>.auth here, and the installed config points at it
 EOF
 chmod 600 .env
 docker compose up -d --build

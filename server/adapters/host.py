@@ -127,12 +127,15 @@ class HostControl:
         return bool(folder and folder.is_dir() and os.access(folder, os.W_OK))
 
     def _conf_path(self, instance: str) -> Path:
+        return self._tunnel_path(instance, ".conf")
+
+    def _tunnel_path(self, instance: str, suffix: str) -> Path:
         folder = self._tunnel_dir()
         if folder is None:
             raise FileNotFoundError("the tunnel folder is not mounted (VPNCONSOLE_TUNNEL_DIR)")
         if not _INSTANCE_RE.fullmatch(instance):
             raise ValueError("unsafe tunnel name")
-        return folder / f"{instance}.conf"
+        return folder / f"{instance}{suffix}"
 
     def tunnel_conf_owner(self, instance: str) -> str | None:
         """None = no config yet; "" = a config the console did not write; otherwise the id
@@ -155,9 +158,9 @@ class HostControl:
         except OSError:
             return None
 
-    def tunnel_write(self, instance: str, text: str) -> None:
-        """Atomically write an installed copy (root only, 0600)."""
-        path = self._conf_path(instance)
+    def tunnel_write(self, instance: str, text: str, suffix: str = ".conf") -> None:
+        """Atomically write an installed copy or a credentials file (root only, 0600)."""
+        path = self._tunnel_path(instance, suffix)
         if path.is_symlink():
             raise PermissionError(f"{path.name} is a symlink; refusing to write through it")
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".vpnconsole-", suffix=".tmp")

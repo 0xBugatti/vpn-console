@@ -126,12 +126,114 @@ def test_unit_names_are_safe_for_odd_profile_names(authed, ovpn_factory, fakes):
 
 # ------------------------------------------------------------------- refused profiles
 
-def test_a_profile_needing_a_password_is_refused_with_the_line(authed, ovpn_factory, fakes):
+def test_a_signing_profile_without_credentials_says_so_and_installs_nothing(authed, ovpn_factory, fakes):
     pid = add(authed, ovpn_factory, extra="\nauth-user-pass\n")
     r = authed.patch(f"/api/profiles/{pid}", json=ENABLE)
-    assert r.status_code == 422 and r.json()["error"]["code"] == "tunnel_refused"
-    assert r.json()["error"]["detail"]["findings"][0]["directive"] == "auth-user-pass"
-    assert fakes["host"].tunnel_files == {} and fakes["host"].action_log == []
+    assert r.status_code == 422 and r.json()["error"]["code"] == "tunnel_needs_auth"
+    assert "username and password" in r.json()["error"]["message"]
+    assert fakes["host"].tunnel_files == {} and fakes["host"].auth_files == {} and fakes["host"].action_log == []
+
+
+# ----------------------------------------------------------- username + password profiles
+
+AUTH = {"username": "bugatti", "password": "s3cret-hunter2"}
+
+
+def enable_with_auth(authed, pid, creds=AUTH):
+    r = authed.patch(f"/api/profiles/{pid}",
+                     json={**ENABLE, "typed_confirm": _name_of(authed, pid), "auth": creds})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _name_of(authed, pid):
+    return authed.get(f"/api/profiles/{pid}").json()["name"]
+
+
+def test_a_signing_profile_enables_with_credentials_in_a_root_only_file(authed, ovpn_factory, fakes):
+    pid = add(authed, ovpn_factory, extra="\nauth-user-pass\n")
+    # Enable needs the profile name typed: a password is landing in a file on the server
+    r = authed.patch(f"/api/profiles/{pid}", json={**ENABLE, "auth": AUTH})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "typed_confirm_required"
+    assert fakes["host"].tunnel_files == {} and fakes["host"].auth_files == {}
+
+    body = enable_with_auth(authed, pid)
+    job = wait(authed, body["job_id"])
+    assert job["ok"] is True and job["state"] == "connected"
+    host = fakes["host"]
+    conf = host.tunnel_files["corp"]
+    assert "auth-user-pass /etc/openvpn/client/corp.auth" in conf.splitlines()
+    assert "s3cret-hunter2" not in conf                       # never in the config itself
+    assert host.auth_files["corp"] == "bugatti\ns3cret-hunter2\n"
+    assert any("root-only file" in n for n in body["notices"])
+    assert authed.get(f"/api/profiles/{pid}").json()["auth"] == {
+        "needed": True, "stored": True, "username": "bugatti"}
+
+
+def test_inline_credentials_are_lifted_into_the_file_not_kept_in_the_config(authed, ovpn_factory, fakes):
+    extra = "\n<auth-user-pass>\ninline-user\ninline-pass\n</auth-user-pass>\nauth-user-pass\n"
+    pid = add(authed, ovpn_factory, extra=extra)
+    r = authed.patch(f"/api/profiles/{pid}", json=ENABLE)   # no credentials to type: they are in the profile
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert wait(authed, body["job_id"])["ok"] is True
+    conf = fakes["host"].tunnel_files["corp"]
+    live = [l for l in conf.splitlines() if not l.startswith("#")]
+    assert not any(l.strip().startswith(("<auth-user-pass>", "</auth-user-pass>")) for l in live)
+    assert not any("inline-pass" in l for l in live)
+    assert fakes["host"].auth_files["corp"] == "inline-user\ninline-pass\n"
+
+
+def test_credentials_set_in_the_console_beat_the_ones_inside_the_profile(authed, ovpn_factory, fakes):
+    extra = "\n<auth-user-pass>\ninline-user\ninline-pass\n</auth-user-pass>\nauth-user-pass\n"
+    pid = add(authed, ovpn_factory, extra=extra)
+    enable_with_auth(authed, pid)                            # console-stored at enable time
+    assert fakes["host"].auth_files["corp"] == "bugatti\ns3cret-hunter2\n"
+
+
+def test_the_password_never_appears_in_any_api_response(authed, ovpn_factory):
+    pid = add(authed, ovpn_factory, extra="\nauth-user-pass\n")
+    enable_with_auth(authed, pid)
+    for path in (f"/api/profiles", f"/api/profiles/{pid}", f"/api/profiles/{pid}/tunnel",
+                 "/api/overview", "/api/audit?limit=50"):
+        assert "s3cret-hunter2" not in authed.get(path).text, path
+    detail = authed.get(f"/api/profiles/{pid}").json()
+    assert detail["auth"]["username"] == "bugatti" and "password" not in detail["auth"]
+
+
+def test_updating_the_password_rewrites_the_file_without_a_restart(authed, ovpn_factory, fakes):
+    pid = add(authed, ovpn_factory, extra="\nauth-user-pass\n")
+    enable_with_auth(authed, pid)
+    r = authed.patch(f"/api/profiles/{pid}", json={"auth": {"username": "bugatti", "password": "rotated-9"}})
+    assert r.status_code == 200, r.text
+    assert fakes["host"].auth_files["corp"] == "bugatti\nrotated-9\n"
+    assert ("openvpn-client@corp.service", "restart") not in fakes["host"].action_log
+    assert state(authed, pid)["state"] == "connected"          # a running tunnel is not bounced for a password change
+    entries = [e for e in authed.get("/api/audit?limit=20").json()["entries"] if e["action"] == "profile.auth"]
+    assert entries and "rotated-9" not in str(entries) and "s3cret" not in str(entries)
+
+
+def test_setting_credentials_for_a_profile_that_does_not_sign_in_is_refused(authed, ovpn_factory):
+    pid = add(authed, ovpn_factory)
+    r = authed.patch(f"/api/profiles/{pid}", json={"auth": AUTH})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "auth_not_needed"
+
+
+def test_disable_leaves_the_auth_file_and_delete_forgets_the_credentials(authed, ovpn_factory, fakes):
+    pid = add(authed, ovpn_factory, extra="\nauth-user-pass\n")
+    enable_with_auth(authed, pid)
+    r = authed.patch(f"/api/profiles/{pid}", json=DISABLE)
+    wait(authed, r.json()["job_id"])
+    assert "corp" in fakes["host"].auth_files                 # like the config, it stays
+
+    assert enable(authed, pid)["ok"] is True                  # re-enable works from the stored credentials
+    r = authed.patch(f"/api/profiles/{pid}", json=DISABLE)    # stop it, so the name can be taken over
+    wait(authed, r.json()["job_id"])
+    authed.request("DELETE", f"/api/profiles/{pid}", json={"confirm": True})  # Delete only removes from the console
+    again = add(authed, ovpn_factory, name="corp", extra="\nauth-user-pass\n",
+               remotes=(("other.example.net", "1194", "udp"),))
+    r = authed.patch(f"/api/profiles/{again}", json=ENABLE)   # the new profile starts with a clean slate
+    assert r.status_code == 422 and r.json()["error"]["code"] == "tunnel_needs_auth"
 
 
 def test_an_expired_certificate_is_refused(authed, ovpn_factory):

@@ -64,6 +64,9 @@ class Config:
     adapters: str = "real"  # VPNCONSOLE_ADAPTERS=real|fake (research D12)
     scan_dirs: str = ""  # comma-separated read-only host mounts to scan
     tunnel_dir: str = ""  # read-write mount of the host's /etc/openvpn/client (tunnels)
+    tunnel_host_dir: str = "/etc/openvpn/client"  # that folder's path ON THE HOST: the
+    # installed config references it (auth-user-pass points there), and the tunnel service
+    # reads it on the host, not through the container's mount point
     session_secret: bytes = field(repr=False, default=b"")
 
     @property
@@ -98,6 +101,7 @@ def load_config() -> Config:
         adapters=os.environ.get("VPNCONSOLE_ADAPTERS", "real"),
         scan_dirs=os.environ.get("VPNCONSOLE_SCAN_DIRS", ""),
         tunnel_dir=os.environ.get("VPNCONSOLE_TUNNEL_DIR", ""),
+        tunnel_host_dir=os.environ.get("VPNCONSOLE_TUNNEL_HOST_DIR", "/etc/openvpn/client"),
         session_secret=secret.encode() or secrets.token_bytes(32),
     )
 
