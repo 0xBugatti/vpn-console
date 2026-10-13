@@ -235,9 +235,11 @@ def test_tunnel_summary_states():
     unit = lambda s: {"state": s, "since": "now", "enabled_on_boot": True}  # noqa: E731
     f = lambda u, conf=True, ip="": tunnels.tunnel_summary(u, conf, "openvpn-client@x.service", "vc-x", ip)  # noqa: E731
     assert f(unit("active"), ip="10.0.0.2")["state"] == "connected" and f(unit("active"), ip="10.0.0.2")["ip"] == "10.0.0.2"
-    assert f(unit("running"))["state"] == "connected"
+    assert f(unit("running"), ip="10.0.0.2")["state"] == "connected"
+    # OpenVPN 2.7 reports ready to systemd before it has connected: no address, not connected
+    assert f(unit("active"))["state"] == "connecting" and f(unit("active"))["ip"] == ""
     assert f(unit("activating"))["state"] == "connecting"
     assert f(unit("failed"))["state"] == "failed"
     assert f(unit("inactive"))["state"] == "stopped"
     assert f(None)["state"] == "stopped" and f(None, conf=False)["state"] == "none"
-    assert f(unit("failed"))["ip"] == "" and f(unit("active"))["boot"] is True
+    assert f(unit("failed"))["ip"] == "" and f(unit("active"), ip="10.0.0.2")["boot"] is True

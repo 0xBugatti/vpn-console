@@ -456,7 +456,8 @@ function planBody(p, plan) {
   const where = serverOf(p);
   return `<p>Starts a tunnel from this server${where ? ` to <span class="mono">${esc(where)}</span>` : ""}
       and starts it again after a reboot, once it has connected.</p>
-    <ul class="plan-list">${plan.notices.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+    <ul class="plan-list">${plan.notices.map((n) => `<li>${esc(n)}</li>`).join("")}
+      <li>If the server has not answered within ${esc(String(plan.wait_seconds))} seconds, the tunnel is stopped and nothing is left running.</li></ul>
     <p class="small faint">Service <span class="mono">${esc(plan.unit)}</span>, interface
       <span class="mono">${esc(plan.iface)}</span>, config
       <span class="mono">/etc/openvpn/client/${esc(plan.instance)}.conf</span></p>
@@ -512,12 +513,8 @@ async function followTunnelJob(jobId, p, kind, opts = {}) {
   if (document.getElementById("profiles-table")) await load(document.getElementById("page"));
   if (opts.onDone) await opts.onDone(job);
   if (job.ok) toast(`${name}: ${job.detail}`, "success");
-  else if (job.state === "connecting") {
-    await infoDialog({
-      title: `${name} is still connecting`,
-      body: `${detailHtml(job.detail)}<p>It connects by itself once the server answers. Disable stops it.</p>`,
-    });
-  } else {
+  else if (job.state === "superseded") { /* a newer click took over; its own result follows */ }
+  else {
     await infoDialog({
       title: kind === "stop" ? `Could not stop ${name}` : `${name} did not connect`,
       body: detailHtml(job.detail),
@@ -793,7 +790,7 @@ export async function openProfilesDrawer(root, pid) {
         <dl class="kv compact">
           <dt>Service</dt><dd class="mono">${esc(t.unit)}</dd>
           <dt>Interface</dt><dd class="mono">${esc(t.iface)}</dd>
-          <dt>On boot</dt><dd>${t.boot ? "Starts once connected" : "Off"}</dd>
+          <dt>After a reboot</dt><dd>${t.boot ? "Reconnects by itself" : "Stays off"}</dd>
         </dl>
         ${log ? `<pre class="log-tail" tabindex="0">${esc(log)}</pre>` : ""}`;
     }

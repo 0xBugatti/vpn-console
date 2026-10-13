@@ -288,7 +288,8 @@ class FakeHost:
         # --- server tunnels (openvpn-client@<name>) ---
         self.tunnel_files: dict[str, str] = {}          # installed copies, by instance
         self.tunnel_dir_ok = True                       # False = the folder is not mounted
-        self.tunnel_outcome = "active"                  # what a start does: active | failed | activating
+        self.failing_actions: set[str] = set()          # actions that raise, e.g. {"enable"}
+        self.tunnel_outcome = "active"                  # what a start does: active | pending | failed | activating
         self.tunnel_routes: list[str] = ["10.200.1.0/24"]   # networks the fake VPN pushes when it connects
         self.tunnel_addr = "10.200.0.2"
         self.routes_data: list[dict[str, str]] = [
@@ -357,9 +358,11 @@ class FakeHost:
 
     def _tunnel_up(self, unit: str) -> None:
         data = self.units_data[unit]
-        data["state"] = self.tunnel_outcome
-        data["sub_state"] = {"active": "running", "failed": "failed", "activating": "start"}[self.tunnel_outcome]
-        data["since"] = "just now"
+        # "pending" is what OpenVPN 2.7 really does with a server that never answers: systemd
+        # sees the unit as active (READY is sent before connecting) but no interface exists.
+        state, sub_state = {"active": ("active", "running"), "pending": ("active", "running"),
+                            "failed": ("failed", "failed"), "activating": ("activating", "start")}[self.tunnel_outcome]
+        data["state"], data["sub_state"], data["since"] = state, sub_state, "just now"
         if self.tunnel_outcome == "active":
             iface = self._tunnel_iface(unit)
             self.interfaces_data = [i for i in self.interfaces_data if i["iface"] != iface]
@@ -388,6 +391,8 @@ class FakeHost:
         """Synchronous, like the real systemctl call (job tracking is the API layer's)."""
         self._check()
         tunnel = unit.startswith("openvpn-client@")
+        if tunnel and action in self.failing_actions:
+            raise RuntimeError(f"systemctl {action}: Failed to {action} {unit} (fake)")
         if tunnel:
             self._ensure_tunnel_unit(unit)
         if unit not in self.units_data:

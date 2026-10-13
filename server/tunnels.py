@@ -306,7 +306,10 @@ def tunnel_summary(unit: dict[str, Any] | None, conf_installed: bool, unit_id: s
     """One profile's tunnel state from systemd's view of its unit."""
     active = (unit or {}).get("state", "")
     if active in ("active", "running"):
-        state = "connected"
+        # OpenVPN tells systemd it is ready before it has connected ("Pre-connection
+        # initialization successful"), so an active unit is connected only once its
+        # interface has an address.
+        state = "connected" if ip else "connecting"
     elif active == "activating":
         state = "connecting"
     elif active == "failed":

@@ -10,7 +10,7 @@ import time
 import pytest
 
 from server import tunnels
-from server.api import tunnelctl
+from server.api import common, tunnelctl
 
 ENABLE = {"enabled": True, "confirm": True}
 DISABLE = {"enabled": False, "confirm": True}
@@ -19,7 +19,7 @@ DISABLE = {"enabled": False, "confirm": True}
 @pytest.fixture(autouse=True)
 def fast_jobs(monkeypatch):
     monkeypatch.setattr(tunnelctl, "POLL_SECONDS", 0)
-    monkeypatch.setattr(tunnelctl, "WAIT_SECONDS", 2)
+    monkeypatch.setattr(tunnelctl, "WAIT_SECONDS", 0.3)
 
 
 def add(authed, ovpn_factory, name="corp", extra="", **kw) -> str:
@@ -59,9 +59,9 @@ def enable(authed, pid: str, **extra) -> dict:
     return wait(authed, r.json()["job_id"])
 
 
-def audit(authed, action: str) -> list[dict]:
+def audit(authed, action: str, target: str | None = None) -> list[dict]:
     rows = authed.get("/api/audit?limit=200").json()["entries"]
-    return [e for e in rows if e["action"] == action]
+    return [e for e in rows if e["action"] == action and (target is None or e["target"] == target)]
 
 
 # ----------------------------------------------------------------------------- Enable
@@ -88,8 +88,8 @@ def test_enable_installs_the_tunnel_only_copy_starts_it_and_reports_the_ip(authe
     iface = tunnels.iface_name(pid)
     assert f"dev {iface}" in conf.splitlines() and 'pull-filter ignore "redirect-gateway"' in conf
     unit = "openvpn-client@vps-cybervpn.service"
-    assert host.units_data[unit]["enabled_on_boot"] is True          # starts on boot, as chosen
-    assert ("openvpn-client@vps-cybervpn.service", "enable") in host.action_log
+    assert host.units_data[unit]["enabled_on_boot"] is True          # reconnects after a reboot, as chosen
+    assert [a for _, a in host.action_log] == ["start", "enable"]    # boot start only after it connected
 
     t = state(authed, pid)
     assert t["state"] == "connected" and t["ip"] == "10.200.0.2" and t["unit"] == unit
@@ -219,6 +219,7 @@ def test_a_tunnel_that_replaces_the_default_route_is_stopped_and_disabled(authed
     assert state(authed, pid)["state"] == "stopped"
     assert authed.get(f"/api/profiles/{pid}").json()["enabled"] is False
     assert fakes["host"].units_data["openvpn-client@corp.service"]["enabled_on_boot"] is False
+    assert ("openvpn-client@corp.service", "enable") not in fakes["host"].action_log  # never armed for boot
     assert audit(authed, "profile.enable")[0]["outcome"] == "failed"
 
 
@@ -241,15 +242,65 @@ def test_a_tunnel_that_never_connects_reports_the_log(authed, ovpn_factory, fake
     job = enable(authed, pid)
     assert job["ok"] is False and job["state"] == "failed" and "TLS key negotiation failed" in job["detail"]
     assert state(authed, pid)["state"] == "failed"
+    assert state(authed, pid)["boot"] is False                           # a tunnel that never connected is not armed for boot
+    assert ("openvpn-client@corp.service", "enable") not in fakes["host"].action_log
     assert authed.get(f"/api/profiles/{pid}").json()["enabled"] is True  # still wanted; Disable turns it off
 
 
-def test_a_server_that_has_not_answered_yet_is_reported_as_still_connecting(authed, ovpn_factory, fakes):
-    fakes["host"].tunnel_outcome = "activating"
+@pytest.mark.parametrize("outcome", ["pending", "activating"])
+def test_a_server_that_never_answers_is_stopped_and_not_left_retrying(authed, ovpn_factory, fakes, outcome):
+    """OpenVPN 2.7 shows as active before it has connected ("pending"); either way, a tunnel
+    with no address when the wait runs out is stopped, because one that connected later would
+    skip the route check."""
+    fakes["host"].tunnel_outcome = outcome
+    fakes["host"].journal_entries = [
+        {"ts": "1", "prio": 3, "msg": "TLS Error: TLS key negotiation failed to occur within 60 seconds", "cursor": "a"}]
     pid = add(authed, ovpn_factory)
     job = enable(authed, pid)
-    assert job["ok"] is False and job["state"] == "connecting"
-    assert state(authed, pid)["state"] == "connecting"
+    assert job["ok"] is False and job["state"] == "failed"
+    assert "Did not connect within" in job["detail"] and "TLS key negotiation failed" in job["detail"]
+    host = fakes["host"]
+    unit = "openvpn-client@corp.service"
+    assert state(authed, pid)["state"] == "stopped" and state(authed, pid)["boot"] is False
+    assert host.units_data[unit]["state"] == "inactive"
+    assert (unit, "enable") not in host.action_log                      # never armed for boot
+    assert authed.get(f"/api/profiles/{pid}").json()["enabled"] is False  # given up, so Disabled again
+    assert audit(authed, "profile.enable")[0]["outcome"] == "failed"
+
+
+def test_the_failure_message_picks_the_lines_that_explain_it(authed, ovpn_factory, fakes):
+    fakes["host"].tunnel_outcome = "failed"
+    fakes["host"].journal_entries = [
+        {"ts": "1", "prio": 6, "msg": "OpenVPN 2.7.3 starting", "cursor": "a"},
+        {"ts": "2", "prio": 6, "msg": "TLS Error: TLS key negotiation failed to occur within 60 seconds", "cursor": "b"},
+        {"ts": "3", "prio": 6, "msg": "TLS Error: TLS handshake failed", "cursor": "c"},
+        {"ts": "4", "prio": 6, "msg": "SIGUSR1[soft,tls-error] received, process restarting", "cursor": "d"},
+        {"ts": "5", "prio": 6, "msg": "Control Channel MTU parms [ mss_fix:0 ]", "cursor": "e"},
+        {"ts": "6", "prio": 6, "msg": "UDPv4 link remote: [AF_INET]192.0.2.1:1194", "cursor": "f"},
+    ]
+    job = enable(authed, add(authed, ovpn_factory))
+    assert "TLS handshake failed" in job["detail"] and "SIGUSR1" in job["detail"]
+    assert "MTU parms" not in job["detail"] and "link remote" not in job["detail"]
+
+
+def test_an_active_unit_without_an_address_is_shown_as_connecting(authed, ovpn_factory, fakes):
+    pid = add(authed, ovpn_factory)
+    enable(authed, pid)
+    host = fakes["host"]
+    host.interfaces_data = [i for i in host.interfaces_data if i["iface"] != tunnels.iface_name(pid)]  # as before it connects
+    common.host_cache().invalidate("interfaces")
+    t = state(authed, pid)
+    assert t["state"] == "connecting" and t["ip"] == ""
+
+
+def test_a_tunnel_that_is_up_but_cannot_be_armed_for_boot_says_so(authed, ovpn_factory, fakes):
+    fakes["host"].failing_actions = {"enable"}
+    pid = add(authed, ovpn_factory)
+    job = enable(authed, pid)
+    assert job["ok"] is True and job["state"] == "connected"
+    assert "will not start again after a reboot" in job["detail"]
+    assert state(authed, pid)["state"] == "connected" and state(authed, pid)["boot"] is False
+    assert "boot_error" in audit(authed, "profile.enable")[0]["detail"]
 
 
 # ------------------------------------------------------------------------ Disable
@@ -279,6 +330,47 @@ def test_enable_again_after_disable_starts_it_again(authed, ovpn_factory):
     r = authed.patch(f"/api/profiles/{pid}", json=DISABLE)
     wait(authed, r.json()["job_id"])
     assert enable(authed, pid)["state"] == "connected"
+
+
+# ------------------------------------------- a click while a start is still waiting
+
+@pytest.fixture()
+def slow_wait(monkeypatch):
+    monkeypatch.setattr(tunnelctl, "WAIT_SECONDS", 5)
+    monkeypatch.setattr(tunnelctl, "POLL_SECONDS", 0.01)
+
+
+def start_waiting(authed, ovpn_factory, fakes, name: str) -> tuple[str, str]:
+    """Enable a profile whose server does not answer, and return once it is Connecting."""
+    fakes["host"].tunnel_outcome = "pending"
+    pid = add(authed, ovpn_factory, name=name)
+    r = authed.patch(f"/api/profiles/{pid}", json=ENABLE)
+    assert r.status_code == 200
+    until(lambda: state(authed, pid)["state"] == "connecting")
+    return pid, r.json()["job_id"]
+
+
+def test_disabling_while_a_start_is_waiting_takes_over_from_it(authed, ovpn_factory, fakes, slow_wait):
+    pid, first = start_waiting(authed, ovpn_factory, fakes, "takeover-a")
+    r = authed.patch(f"/api/profiles/{pid}", json=DISABLE)  # a connecting tunnel counts as running: confirmed
+    assert r.status_code == 200
+    assert wait(authed, r.json()["job_id"])["ok"] is True
+    old = wait(authed, first)
+    assert old["ok"] is False and old["state"] == "superseded"
+    assert state(authed, pid)["state"] == "stopped"
+    assert audit(authed, "profile.enable", "takeover-a") == []  # the replaced start left no failure behind
+
+
+def test_editing_while_a_start_is_waiting_restarts_it_and_the_old_job_steps_aside(authed, ovpn_factory, fakes, slow_wait):
+    pid, first = start_waiting(authed, ovpn_factory, fakes, "takeover-b")
+    fakes["host"].tunnel_outcome = "active"  # the server answers after the restart
+    r = edit(authed, pid, ovpn_factory(cn="corp-v2"), confirm=True)
+    assert r.status_code == 200
+    second = wait(authed, r.json()["job_id"])
+    assert second["ok"] is True and second["state"] == "connected"
+    assert wait(authed, first)["state"] == "superseded"
+    assert audit(authed, "profile.restart", "takeover-b")[0]["outcome"] == "ok"
+    assert audit(authed, "profile.enable", "takeover-b") == []
 
 
 # --------------------------------------------------------------------------- Edit

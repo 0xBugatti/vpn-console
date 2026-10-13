@@ -444,9 +444,10 @@ on a scratch instance.
   change this server's real VPN tunnel and so use confirm dialogs (FR-012a to FR-012g),
   not the undo toast.
 - **FR-012a**: **Enable** MUST write a tunnel-only copy of the profile to
-  `/etc/openvpn/client/<name>.conf` (root-only, marked as written by the console), enable
-  `openvpn-client@<name>` for boot and start it. **Disable** MUST stop it and turn boot
-  start off. New imports and system scans start Disabled, and nothing starts or stops when
+  `/etc/openvpn/client/<name>.conf` (root-only, marked as written by the console) and start
+  `openvpn-client@<name>`; once it has connected and passed FR-012b, it MUST also be enabled
+  for boot, so a profile that never connected is not retried at every reboot. **Disable**
+  MUST stop it and turn boot start off. New imports and system scans start Disabled, and nothing starts or stops when
   the console itself starts.
 - **FR-012b**: A console tunnel MUST use its own interface name (`vc-<profile id>`, never
   `tunN`) and MUST NOT take over the server's routing: a pushed default route and DNS are
@@ -462,7 +463,10 @@ on a scratch instance.
   `writepid`, `management`, `daemon`, `chroot`) MUST be removed from the installed copy
   with a notice; the stored profile is never changed.
 - **FR-012d**: Enable MUST show progress while the tunnel connects (up to about 100 s) and
-  report the tunnel address, or the last log lines if it did not come up. Every outcome
+  report the tunnel address, or the last log lines if it did not come up. A tunnel counts
+  as connected only when its interface has an address (OpenVPN tells systemd it is ready
+  before it has connected). One with no address when the wait runs out MUST be stopped and
+  left off for boot, so it can never connect later without the FR-012b check. Every outcome
   MUST be written to the audit log.
 - **FR-012e**: Editing a profile that has a running tunnel MUST ask for confirmation,
   rewrite the installed copy and restart the tunnel; undo and revert do the same. An edit
