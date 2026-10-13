@@ -42,7 +42,7 @@ def test_profile_tile_counts_and_attention_item(authed, ovpn_factory):
 
     body = authed.get("/api/overview").json()
     assert body["tiles"]["profiles"]["total"] == 2
-    assert body["tiles"]["profiles"]["enabled"] == 2
+    assert body["tiles"]["profiles"]["enabled"] == 0  # imports start Disabled
 
     expired = [a for a in body["attention"] if a["code"] == "profile.cert_expired"]
     assert len(expired) == 1
@@ -146,4 +146,4 @@ def test_tunnel_states_after_profile_import(authed, ovpn_factory):
 
 def test_openvpn_tunnel_ip_in_overview(authed):
     body = authed.get("/api/overview").json()
-    assert body["ips"]["openvpn"] == [{"iface": "tun0", "addr": "10.233.2.74"}]
+    assert body["ips"]["openvpn"] == [{"iface": "tun0", "addr": "10.233.2.74", "profile": ""}]

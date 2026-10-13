@@ -81,9 +81,9 @@ function drawPath(data) {
   if (tunnels.length) {
     for (const t of tunnels) branches.push(`
       <div class="np-node">
-        <small>OpenVPN · ${esc(t.iface)}</small>
+        <small>OpenVPN · ${esc(t.profile || t.iface)}</small>
         ${addr(t.addr)}
-        <span class="sub">client tunnel up</span>
+        <span class="sub">${t.profile ? `${esc(t.iface)} · ` : ""}client tunnel up</span>
       </div>`);
   } else {
     branches.push(`
@@ -165,8 +165,8 @@ const UNIT_SEV = {
   inactive: ["warn", "Inactive"], failed: ["err", "Failed"],
   "not-found": ["err", "Missing"], unknown: ["warn", "Unknown"],
 };
-const TUNNEL_SEV = { up: ["ok", "Tunnel up"], down: ["warn", "Tunnel down"],
-  "not-installed": ["off", "Not installed as service"] };
+const TUNNEL_SEV = { up: ["ok", "Connected"], connecting: ["warn", "Connecting"], failed: ["err", "Failed"],
+  down: ["off", "Stopped"], "not-installed": ["off", "No tunnel"] };
 
 function drawTiles(tiles, attention, vpn) {
   const sevFor = (prefix) => {
@@ -189,11 +189,15 @@ function drawTiles(tiles, attention, vpn) {
       const name = row.unit.startsWith("tailscaled") ? "Tailscale" : "OpenVPN";
       rows.push(`<span class="tile-row" title="${esc(name)}: ${esc(label)}">${status(kind, name)}</span>`);
     }
-    const tunnels = vpn.tunnels || [];
-    const up = tunnels.filter((t) => t.state === "up").length;
-    if (tunnels.length) {
-      const names = tunnels.map((t) => `${t.name}: ${(TUNNEL_SEV[t.state] || TUNNEL_SEV["not-installed"])[1]}`).join("\n");
-      rows.push(`<span class="tile-row" title="${esc(names)}">${status(up ? "ok" : "off", `${up}/${tunnels.length} profile units`)}</span>`);
+    // only tunnels somebody turned on: a Disabled profile is not a tunnel that is down
+    const wanted = (vpn.tunnels || []).filter((t) => ["up", "connecting", "failed"].includes(t.state));
+    const up = wanted.filter((t) => t.state === "up").length;
+    if (wanted.length) {
+      const names = wanted.map((t) => `${t.name}: ${TUNNEL_SEV[t.state][1]}`).join("\n");
+      const kind = wanted.some((t) => t.state === "failed") ? "err"
+        : wanted.some((t) => t.state === "connecting") ? "warn" : "ok";
+      if (kind === "err") vpnCls = "err"; else if (kind === "warn" && vpnCls !== "err") vpnCls = "warn";
+      rows.push(`<span class="tile-row" title="${esc(names)}">${status(kind, `${up} of ${wanted.length} tunnels connected`)}</span>`);
     }
   }
 

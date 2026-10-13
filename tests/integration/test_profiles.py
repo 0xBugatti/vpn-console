@@ -26,7 +26,9 @@ def test_multi_file_import_creates_rows(authed, fresh_db, ovpn_factory):
 
     rows = authed.get("/api/profiles").json()["profiles"]
     assert sorted(p["name"] for p in rows) == ["alpha", "beta"]
-    assert all(p["status"] == "Valid" for p in rows)
+    # new imports start Disabled (no tunnel): nothing connects by itself
+    assert all(p["status"] == "Disabled" and p["enabled"] is False for p in rows)
+    assert all(p["tunnel"]["state"] == "none" for p in rows)
 
 
 def test_import_reports_parse_error(authed, fresh_db):
@@ -80,10 +82,16 @@ def test_patch_config_keeps_previous_and_returns_undo(authed, fresh_db, ovpn_fac
     assert authed.get(f"/api/profiles/{pid}").json()["config_text"] != new_text
 
 
-def test_enable_toggle_undoable(authed, fresh_db, ovpn_factory):
+def test_disable_without_a_tunnel_is_an_undoable_flag_flip(authed, fresh_db, ovpn_factory):
+    """A profile that was Enabled before tunnels existed has nothing installed: Disable only
+    flips the flag, and that stays undoable (the 10-second toast)."""
+    from server import db
+
     pid = _import(authed, ("corp.ovpn", ovpn_factory(cn="corp").encode())).json()["results"][0]["id"]
+    db.get_conn().execute("UPDATE profiles SET enabled=1 WHERE id=?", (pid,))
     r = authed.patch(f"/api/profiles/{pid}", json={"enabled": False})
-    assert r.json()["profile"]["status"] == "Disabled"
+    assert r.status_code == 200, r.text
+    assert r.json()["profile"]["status"] == "Disabled" and r.json()["job_id"] is None
     token = r.json()["undo_token"]
 
     undo = authed.post(f"/api/undo/{token}")

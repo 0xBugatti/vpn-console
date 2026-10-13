@@ -1,15 +1,63 @@
 /* Profiles page (US2): import (drag-drop + parse chips + duplicate resolve),
-   filterable table, detail drawer with raw editor / revert / undo tier. */
+   filterable table, detail drawer with raw editor / revert / undo tier.
+   Enable starts the profile's tunnel on this server, Disable stops it. */
 import {
   api, toast, errorText, esc, h, $, $$, status, relTime, fmtDate,
-  confirmDialog, typeConfirmDialog, icon, copyText, BASE,
+  confirmDialog, typeConfirmDialog, icon, copyText, BASE, trapKeys,
 } from "../app.js";
 
 const STATUS_KIND = {
   Valid: "ok", Expiring: "warn", Expired: "err", Disabled: "off", "Parse error": "err",
 };
 
+/* The tunnel state, when the server has one, outranks the library status. */
+const TUNNEL_CHIP = {
+  connected: ["ok", "Connected"],
+  connecting: ["warn", "Connecting"],
+  stopping: ["warn", "Stopping"],
+  failed: ["err", "Failed"],
+};
+const UP = new Set(["connected", "connecting"]);                      // asks before it is touched
+const LIVE = new Set(["connected", "connecting", "stopping", "failed"]); // Disable has something to stop
+const CERT_WARN_DAYS = 14;
+
 const state = { q: "", rows: [], selected: new Set() };
+const following = new Set();   // job ids already being followed
+const pending = new Map();     // profile id -> "Starting" | "Stopping" until its job has finished
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function tunnelOf(p) { return p.tunnel?.state || "none"; }
+
+function stateChip(p) {
+  const doing = pending.get(p.id);   // the click was accepted but systemd has not caught up yet
+  if (doing === "Stopping") return status("warn", "Stopping");
+  const chip = TUNNEL_CHIP[tunnelOf(p)];
+  if (chip) return status(chip[0], chip[1]);
+  if (doing === "Starting") return status("warn", "Starting");
+  return status(STATUS_KIND[p.status] || "off", p.status);
+}
+
+function serverOf(p) {
+  const ep = p.endpoints[0];
+  return ep ? `${ep.host}:${ep.port}${ep.proto ? `/${ep.proto}` : ""}` : "";
+}
+
+/* Certificate warning beside the date, so a Disabled profile does not hide an expired one. */
+function certBadge(p) {
+  if (!p.cert_expires_at) return "";
+  const days = (Date.parse(p.cert_expires_at) - Date.now()) / 86400000;
+  if (days <= 0) return ' <span class="badge danger">Expired</span>';
+  if (days <= CERT_WARN_DAYS) return ' <span class="badge warn">Expiring</span>';
+  return "";
+}
+
+/* What the Enable/Disable button should say and do for this tunnel state. */
+function toggleView(p) {
+  const s = tunnelOf(p);
+  if (s === "unknown") return { label: "Server state unavailable", icon: "pause", disabled: true };
+  return LIVE.has(s) ? { label: "Disable", icon: "pause" } : { label: "Enable", icon: "play" };
+}
 
 /* ---------- page ---------- */
 export async function renderProfiles(root) {
@@ -20,7 +68,8 @@ export async function renderProfiles(root) {
     <button class="btn ghost sm" id="scan-btn">${icon("search", 15)} Scan system</button>
     <button class="btn primary sm" id="import-btn">${icon("upload", 15)} Import</button>
   </div>
-  <p class="page-sub">OpenVPN client profiles. Status comes from the embedded certificate, so expiring profiles are flagged before anyone is locked out.</p>
+  <p class="page-sub">OpenVPN client profiles. Enable starts a profile's tunnel on this server and Disable stops it. Certificate expiry is flagged before anyone is locked out.</p>
+  <div class="progress-line" id="tunnel-progress" role="status" hidden></div>
 
   <div class="card" id="import-zone">
     <div class="dropzone" id="dropzone" tabindex="0" role="button"
@@ -126,11 +175,11 @@ function drawRows(root) {
   } else {
     empty.hidden = true;
     tbody.innerHTML = rows.map((p) => {
-      const ep = p.endpoints[0];
-      const server = ep ? `${ep.host}:${ep.port}${ep.proto ? `/${ep.proto}` : ""}` : "—";
+      const server = serverOf(p) || "—";
+      const toggle = toggleView(p);
       return `<tr data-id="${p.id}">
         <td><input type="checkbox" data-sel aria-label="Select ${esc(p.name)}" ${state.selected.has(p.id) ? "checked" : ""}></td>
-        <td>${status(STATUS_KIND[p.status] || "off", p.status)}</td>
+        <td>${stateChip(p)}${p.tunnel?.ip ? `<div class="mono small faint">${esc(p.tunnel.ip)}</div>` : ""}</td>
         <td>
           <strong>${esc(p.name)}</strong>${p.name_shared ? ' <span class="badge warn">duplicate name</span>' : ""}
           <div class="tagline">${p.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div>
@@ -138,14 +187,14 @@ function drawRows(root) {
         <td class="mono small">${esc(server)}${p.endpoints.length > 1 ? ` <span class="faint">+${p.endpoints.length - 1}</span>` : ""}</td>
         <td class="mono small">${esc(p.cipher || "—")}</td>
         <td>${p.cert_expires_at
-          ? `<span class="small">${fmtDate(p.cert_expires_at)}</span> <span class="faint small">${relTime(p.cert_expires_at)}</span>`
+          ? `<span class="small">${fmtDate(p.cert_expires_at)}</span> <span class="faint small">${relTime(p.cert_expires_at)}</span>${certBadge(p)}`
           : '<span class="faint">—</span>'}</td>
         <td class="faint small">${relTime(p.updated_at)}</td>
         <td class="row-actions">
           <button data-act="download" title="Download">${icon("download", 15)}</button>
           <button data-act="qr" title="QR code">${icon("qr", 15)}</button>
           <button data-act="edit" title="Open">${icon("pencil", 15)}</button>
-          <button data-act="toggle" title="${p.enabled ? "Disable" : "Enable"}">${icon(p.enabled ? "pause" : "play", 15)}</button>
+          <button data-act="toggle" title="${esc(toggle.label)}" aria-label="${esc(toggle.label)} ${esc(p.name)}" ${toggle.disabled ? "disabled" : ""}>${icon(toggle.icon, 15)}</button>
           <button data-act="delete" title="Delete" class="danger">${icon("trash", 15)}</button>
         </td>
       </tr>`;
@@ -160,7 +209,7 @@ function drawRows(root) {
     const act = e.target.closest("[data-act]")?.dataset.act;
     if (act === "download") { window.location.href = `${BASE}/api/profiles/${p.id}/download`; return; }
     if (act === "qr") { openQrModal(p.id); return; }
-    if (act === "toggle") return void toggleProfile(root, p);
+    if (act === "toggle") return void (e.target.closest("[data-act]").disabled ? null : toggleProfile(root, p));
     if (act === "delete") return void deleteProfile(root, p);
     openProfilesDrawer(root, p.id); // row click and the edit icon both open detail
   };
@@ -367,37 +416,226 @@ export function undoable(msg, token) {
   });
 }
 
-async function toggleProfile(root, p) {
+/* ---------- tunnel actions: Enable starts the tunnel, Disable stops it ---------- */
+function infoDialog({ title, body, closeLabel = "Close" }) {
+  return new Promise((resolve) => {
+    const scrim = h(`<div class="dialog-scrim" role="dialog" aria-modal="true">
+      <div class="dialog">
+        <h2>${esc(title)}</h2>
+        <div class="body">${body}</div>
+        <div class="btn-row"><button class="btn" data-close>${esc(closeLabel)}</button></div>
+      </div>
+    </div>`);
+    document.body.appendChild(scrim);
+    let done = false;
+    const close = () => {
+      if (done) return;
+      done = true;
+      scrim.remove();
+      restore();
+      resolve();
+    };
+    const restore = trapKeys(scrim, close);
+    $("[data-close]", scrim).onclick = close;
+    scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    $("[data-close]", scrim).focus();
+  });
+}
+
+const findingList = (list) => `<ul class="plan-lines">${list.map((f) =>
+  `<li><span class="mono">${esc(f.text)}</span><span class="faint small"> line ${f.line_no}: ${esc(f.why)}</span></li>`
+).join("")}</ul>`;
+
+/* A failed request, in a dialog: these messages name lines and files, so a toast is too brief. */
+function problem(title, err) {
+  const list = err?.detail?.findings?.length ? findingList(err.detail.findings) : "";
+  return infoDialog({ title, body: `<p>${esc(errorText(err))}</p>${list}` });
+}
+
+function planBody(p, plan) {
+  const where = serverOf(p);
+  return `<p>Starts a tunnel from this server${where ? ` to <span class="mono">${esc(where)}</span>` : ""}
+      and starts it again after a reboot, once it has connected.</p>
+    <ul class="plan-list">${plan.notices.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+    <p class="small faint">Service <span class="mono">${esc(plan.unit)}</span>, interface
+      <span class="mono">${esc(plan.iface)}</span>, config
+      <span class="mono">/etc/openvpn/client/${esc(plan.instance)}.conf</span></p>
+    ${plan.scripts.length
+      ? `<p><strong>This profile runs commands as root on this server:</strong></p>${findingList(plan.scripts)}
+         <p class="small">Enable it only if you wrote these lines or trust whoever did.</p>`
+      : ""}`;
+}
+
+/* "…did not come up. Last log lines: a | b" becomes a sentence and a small log block. */
+function detailHtml(detail) {
+  const [lead, tail] = String(detail).split("Last log lines: ");
+  if (tail === undefined) return `<p>${esc(detail)}</p>`;
+  return `<p>${esc(lead.trim())}</p><p class="small faint">Last log lines</p>
+    <pre class="log-tail">${esc(tail.split(" | ").join("\n"))}</pre>`;
+}
+
+/* Follows a start/stop job to the end. The progress line shows on the Profiles page (or wherever the
+   caller points it); the outcome is a toast when it worked and a dialog when it did not. */
+async function followTunnelJob(jobId, p, kind, opts = {}) {
+  const name = p.name;
+  if (following.has(jobId)) return null;
+  following.add(jobId);
+  const started = Date.now();
+  let lastLoad = 0;
+  const strip = () => document.getElementById("tunnel-progress");
+  const show = opts.progress || ((text, secs) => {
+    const bar = strip();
+    if (!bar) return;
+    bar.hidden = false;
+    bar.innerHTML = `<span class="spin">${icon("refresh", 15)}</span><span>${esc(text)}</span><span class="faint small">${secs} s</span>`;
+  });
+  let job = null;
+  try {
+    for (;;) {
+      try { job = await api(`/jobs/${jobId}`); } catch { /* a missed poll: keep waiting */ }
+      const secs = Math.round((Date.now() - started) / 1000);
+      if (job?.done) break;
+      show(job?.detail || `Working on ${name}…`, secs);
+      if (Date.now() - lastLoad > 2000 && document.getElementById("profiles-table")) {
+        lastLoad = Date.now();
+        await load(document.getElementById("page"));
+      }
+      if (secs > 180) { toast(`${name}: still working. Check its status in the table.`, "warn"); return null; }
+      await sleep(1000);
+    }
+  } finally {
+    following.delete(jobId);
+    pending.delete(p.id);
+    const bar = strip();
+    if (bar) bar.hidden = true;
+  }
+  if (document.getElementById("profiles-table")) await load(document.getElementById("page"));
+  if (opts.onDone) await opts.onDone(job);
+  if (job.ok) toast(`${name}: ${job.detail}`, "success");
+  else if (job.state === "connecting") {
+    await infoDialog({
+      title: `${name} is still connecting`,
+      body: `${detailHtml(job.detail)}<p>It connects by itself once the server answers. Disable stops it.</p>`,
+    });
+  } else {
+    await infoDialog({
+      title: kind === "stop" ? `Could not stop ${name}` : `${name} did not connect`,
+      body: detailHtml(job.detail),
+    });
+  }
+  return job;
+}
+
+/* Enable: ask the server what it would do, show that, confirm, then start the tunnel.
+   Returns true once the start is under way. */
+async function enableProfile(root, p) {
+  let info;
+  try { info = await api(`/profiles/${p.id}/tunnel`); }
+  catch (err) { await problem(`Could not check ${p.name}`, err); return false; }
+  const plan = info.plan;
+  if (UP.has(info.tunnel.state)) { toast(`${p.name} is already running.`, "info"); await load(root); return false; }
+  if (!plan.available) {
+    await infoDialog({
+      title: "Tunnel folder not available",
+      body: `<p>The console cannot write tunnel configs on this server because /etc/openvpn/client is not mounted into it.
+             Set VPNCONSOLE_TUNNEL_DIR and add the mount described in deploy/README-deploy.md, then restart the console.</p>`,
+    });
+    return false;
+  }
+  if (plan.blocked) {
+    await infoDialog({ title: `${p.name} cannot be enabled`, body: `<p>${esc(plan.blocked)}</p>` });
+    return false;
+  }
+  if (plan.refused.length) {
+    await infoDialog({
+      title: `${p.name} cannot run as a server tunnel`,
+      body: `<p>A tunnel on this server has to start without anyone typing a password or supplying a file, and
+             these lines prevent that:</p>${findingList(plan.refused)}
+             <p>Fix them in the config editor, then enable it again.</p>`,
+    });
+    return false;
+  }
+  const scripts = plan.needs_typed_confirm;
+  const body = planBody(p, plan);
+  const ok = scripts
+    ? await typeConfirmDialog({ title: `Enable ${p.name} and run its scripts?`, body, phrase: p.name, confirmLabel: "Enable and run scripts" })
+    : await confirmDialog({ title: `Enable ${p.name}?`, body, confirmLabel: "Enable and start tunnel" });
+  if (!ok) return false;
   try {
     const data = await api(`/profiles/${p.id}`, {
-      method: "PATCH", body: { enabled: !p.enabled },
+      method: "PATCH",
+      body: { enabled: true, confirm: true, ...(scripts ? { typed_confirm: p.name } : {}) },
     });
-    undoable(`${data.profile.name} ${data.profile.enabled ? "enabled" : "disabled"}.`, data.undo_token);
+    pending.set(p.id, "Starting");
     await load(root);
-  } catch (err) { toast(errorText(err), "error"); }
+    if (data.job_id) followTunnelJob(data.job_id, p, "start");
+    else pending.delete(p.id);
+    return true;
+  } catch (err) {
+    await problem(`Could not enable ${p.name}`, err);
+    await load(root);
+    return false;
+  }
+}
+
+/* Disable: stop the tunnel and turn its start on boot off. Returns true once it is under way. */
+async function disableProfile(root, p) {
+  const live = UP.has(tunnelOf(p));
+  const ok = await confirmDialog({
+    title: `Disable ${p.name}?`,
+    body: live
+      ? `<p>Stops the tunnel${p.tunnel.ip ? ` (<span class="mono">${esc(p.tunnel.ip)}</span>)` : ""} and stops it starting on boot.
+         Anything on this server that uses it loses that connection now.</p>
+         <p>The profile and its config stay in the console, so you can enable it again.</p>`
+      : `<p>Turns off the tunnel's start on boot and clears its failed state.
+         The profile and its config stay in the console.</p>`,
+    confirmLabel: live ? "Disable and stop tunnel" : "Disable",
+  });
+  if (!ok) return false;
+  try {
+    const data = await api(`/profiles/${p.id}`, { method: "PATCH", body: { enabled: false, confirm: true } });
+    if (data.job_id) pending.set(p.id, "Stopping");
+    await load(root);
+    if (data.job_id) followTunnelJob(data.job_id, p, "stop");
+    else if (data.undo_token) undoable(`${p.name} disabled.`, data.undo_token);
+    return true;
+  } catch (err) {
+    await problem(`Could not disable ${p.name}`, err);
+    await load(root);
+    return false;
+  }
+}
+
+function toggleProfile(root, p) {
+  return LIVE.has(tunnelOf(p)) ? disableProfile(root, p) : enableProfile(root, p);
 }
 
 async function deleteProfile(root, p) {
+  const left = p.tunnel && !["none", "unknown"].includes(p.tunnel.state);
   const yes = await confirmDialog({
     title: "Delete profile",
-    body: `Deletes <strong>${esc(p.name)}</strong> and any share links pointing at it.
-           The .ovpn file is removed from the server. This cannot be undone.`,
+    body: `<p>Deletes <strong>${esc(p.name)}</strong> and any share links pointing at it.
+           The .ovpn file is removed from the console. This cannot be undone.</p>
+           ${left ? `<p><strong>Its server tunnel is not touched.</strong> <span class="mono">${esc(p.tunnel.unit)}</span>
+           stays as it is and its config stays in /etc/openvpn/client. Disable the profile first if you want the tunnel stopped.</p>` : ""}`,
     confirmLabel: "Delete profile", danger: true,
   });
-  if (!yes) return;
+  if (!yes) return false;
   try {
-    await api(`/profiles/${p.id}`, { method: "DELETE", body: { confirm: true } });
-    toast(`${p.name} deleted.`, "success");
+    const out = await api(`/profiles/${p.id}`, { method: "DELETE", body: { confirm: true } });
+    toast(`${p.name} deleted.${out.tunnel_left ? ` Tunnel ${out.tunnel_left} was left as it is.` : ""}`, "success");
     state.selected.delete(p.id);
     await load(root);
-  } catch (err) { toast(errorText(err), "error"); }
+    return true;
+  } catch (err) { toast(errorText(err), "error"); return false; }
 }
 
 async function bulkDelete(root) {
   const n = state.selected.size;
   const yes = await typeConfirmDialog({
     title: "Delete profiles",
-    body: `Permanently deletes <strong>${n} profiles</strong> and their share links.`,
+    body: `<p>Permanently deletes <strong>${n} profiles</strong> and their share links from the console.</p>
+           <p>Server tunnels they started are not stopped. Disable a profile first if its tunnel should go.</p>`,
     phrase: "DELETE", confirmLabel: `Delete ${n} profiles`,
   });
   if (!yes) return;
@@ -421,7 +659,7 @@ export async function openProfilesDrawer(root, pid) {
   const drawer = h(`<aside class="drawer" role="dialog" aria-modal="true" aria-label="${esc(p.name)}">
     <header>
       <h2>${esc(p.name)}</h2>
-      ${status(STATUS_KIND[p.status] || "off", p.status)}
+      <span data-state-chip>${stateChip(p)}</span>
       <button class="btn ghost sm" data-close aria-label="Close">${icon("x", 15)}</button>
     </header>
     <div class="body">
@@ -436,6 +674,12 @@ export async function openProfilesDrawer(root, pid) {
       </dl>
 
       <div class="field">
+        <label>Server tunnel</label>
+        <div class="tunnel-box" data-tunnel-box><p class="faint small" style="margin:0">Checking the server…</p></div>
+        <div class="progress-line" data-tunnel-progress hidden role="status"></div>
+      </div>
+
+      <div class="field">
         <label>Tags</label>
         <div class="tag-editor" data-tags></div>
       </div>
@@ -448,6 +692,7 @@ export async function openProfilesDrawer(root, pid) {
           ${p.previous_sha256 ? `<button class="btn ghost sm" data-revert>${icon("undo", 14)} Revert to previous</button>` : ""}
           <button class="btn ghost sm" data-copy>${icon("copy", 14)} Copy</button>
         </div>
+        <p class="hint" data-save-hint></p>
       </div>
 
       <div class="field">
@@ -468,7 +713,8 @@ export async function openProfilesDrawer(root, pid) {
     </div>
     <footer class="btn-row" style="padding:12px 18px;border-top:1px solid var(--border)">
       <a class="btn ghost sm" href="${BASE}/api/profiles/${p.id}/download" download="${esc(p.name)}.ovpn">${icon("download", 14)} Download</a>
-      <button class="btn sm" data-toggle>${p.enabled ? `${icon("pause", 14)} Disable` : `${icon("play", 14)} Enable`}</button>
+      <button class="btn sm" data-toggle></button>
+      <button class="btn ghost sm" data-retry hidden>${icon("refresh", 14)} Try again</button>
       <div style="flex:1"></div>
       <button class="btn danger sm" data-delete>${icon("trash", 14)} Delete</button>
     </footer>
@@ -508,13 +754,109 @@ export async function openProfilesDrawer(root, pid) {
 
   const config = $("[data-config]", drawer);
   config.value = p.config_text;
-  $("[data-save]", drawer).onclick = async () => {
+
+  /* --- server tunnel: state, log, and the Enable/Disable buttons --- */
+  const box = $("[data-tunnel-box]", drawer);
+  const saveHint = $("[data-save-hint]", drawer);
+  const toggleBtn = $("[data-toggle]", drawer);
+  const retryBtn = $("[data-retry]", drawer);
+  const progressEl = $("[data-tunnel-progress]", drawer);
+  const setBoxProgress = (text, secs) => {
+    progressEl.hidden = false;
+    progressEl.innerHTML = `<span class="spin">${icon("refresh", 15)}</span><span>${esc(text)}</span><span class="faint small">${secs} s</span>`;
+  };
+  const drawFooter = () => {
+    const v = toggleView(p);
+    toggleBtn.innerHTML = `${icon(v.icon, 14)} ${esc(v.label)}`;
+    toggleBtn.disabled = Boolean(v.disabled);
+    retryBtn.hidden = tunnelOf(p) !== "failed";
+    $("[data-state-chip]", drawer).innerHTML = stateChip(p);
+    saveHint.textContent = UP.has(tunnelOf(p)) ? "Saving applies this config and restarts the running tunnel." : "";
+  };
+  const drawTunnel = (info) => {
+    const t = info.tunnel;
+    if (t.state === "none") {
+      box.innerHTML = `<p class="muted small" style="margin:0">No tunnel yet. Enable starts one from this server and starts it
+        again after a reboot, once it has connected. It would run as <span class="mono">${esc(info.plan.unit)}</span>
+        on interface <span class="mono">${esc(info.plan.iface)}</span>.</p>`;
+    } else if (t.state === "unknown") {
+      box.innerHTML = `<p class="muted small" style="margin:0">The server's service state cannot be read right now.</p>`;
+    } else {
+      const log = (info.log_tail || []).map((l) => {
+        const at = new Date(Number(l.ts) / 1000);
+        const when = Number.isNaN(at.getTime()) ? "" : `${at.toLocaleTimeString()}  `;
+        return `${when}${l.msg}`;
+      }).join("\n");
+      box.innerHTML = `<div class="tunnel-state">${stateChip({ ...p, tunnel: t })}
+          ${t.ip ? `<span class="mono small">${esc(t.ip)}</span>` : ""}
+          ${t.since ? `<span class="faint small">since ${esc(t.since)}</span>` : ""}</div>
+        <dl class="kv compact">
+          <dt>Service</dt><dd class="mono">${esc(t.unit)}</dd>
+          <dt>Interface</dt><dd class="mono">${esc(t.iface)}</dd>
+          <dt>On boot</dt><dd>${t.boot ? "Starts once connected" : "Off"}</dd>
+        </dl>
+        ${log ? `<pre class="log-tail" tabindex="0">${esc(log)}</pre>` : ""}`;
+    }
+  };
+  const refreshTunnel = async () => {
     try {
-      const data = await api(`/profiles/${p.id}`, {
-        method: "PATCH", body: { config_text: config.value },
+      const info = await api(`/profiles/${p.id}/tunnel`);
+      p = { ...p, tunnel: info.tunnel };
+      drawTunnel(info);
+      drawFooter();
+    } catch (err) { box.innerHTML = `<p class="faint small" style="margin:0">${esc(errorText(err))}</p>`; }
+  };
+  drawFooter();
+  refreshTunnel();
+
+  /* A running tunnel is restarted by a save or a revert, so those ask first (the server insists too). */
+  const confirmed = async (send, spec) => {
+    if (UP.has(tunnelOf(p))) {
+      if (!(await confirmDialog(spec))) return null;
+      return send({ confirm: true });
+    }
+    try { return await send({}); }
+    catch (err) {
+      if (err.code !== "confirm_required") throw err;
+      if (!(await confirmDialog(spec))) return null;
+      return send({ confirm: true });
+    }
+  };
+  const restartSpec = (verb) => ({
+    title: `${verb} and restart ${p.name}?`,
+    body: `<p>The tunnel for <strong>${esc(p.name)}</strong> is running. This applies the config to the server and restarts it,
+           so traffic over the tunnel stops for a few seconds.</p>
+           <p>If the restarted tunnel does not connect, undo the change or revert to the previous version.</p>`,
+    confirmLabel: `${verb} and restart`,
+  });
+  /* What happened on the server after a save, an undo or a revert. */
+  const afterSync = async (data) => {
+    const sync = data.tunnel_sync;
+    if (data.notices?.length) toast(data.notices.join(" "), "info");
+    if (sync && sync.applied === false) {
+      await infoDialog({ title: "Saved, but not applied to the server", body: `<p>${esc(sync.reason)}</p>` });
+    }
+    if (data.job_id) {
+      followTunnelJob(data.job_id, p, "restart", {
+        progress: setBoxProgress,
+        onDone: () => { progressEl.hidden = true; return refreshTunnel(); },
       });
+    } else {
+      refreshTunnel();
+    }
+  };
+
+  $("[data-save]", drawer).onclick = async () => {
+    if (config.value === p.config_text) { toast("No changes to save.", "info"); return; }
+    try {
+      const data = await confirmed(
+        (extra) => api(`/profiles/${p.id}`, { method: "PATCH", body: { config_text: config.value, ...extra } }),
+        restartSpec("Save"));
+      if (!data) return;
       p = { ...p, ...data.profile };
-      undoable("Config saved. The previous version is kept.", data.undo_token);
+      const restarting = data.tunnel_sync?.restarted;
+      const msg = `Config saved. The previous version is kept.${restarting ? " The tunnel is restarting." : ""}`;
+      if (data.undo_token) undoable(msg, data.undo_token); else toast(msg, "success");
       $("[data-revert]", drawer)?.remove();
       const footerBtns = $(".btn-row", drawer);
       if (!footerBtns.querySelector("[data-revert]")) {
@@ -523,29 +865,29 @@ export async function openProfilesDrawer(root, pid) {
         footerBtns.prepend(b);
       }
       await load(root);
-    } catch (err) { toast(errorText(err), "error"); }
+      await afterSync(data);
+    } catch (err) { await problem("Could not save the config", err); }
   };
   const doRevert = async () => {
     try {
-      const data = await api(`/profiles/${p.id}/revert`, { method: "POST" });
+      const data = await confirmed(
+        (extra) => api(`/profiles/${p.id}/revert`, { method: "POST", body: extra }),
+        restartSpec("Revert"));
+      if (!data) return;
       p = { ...p, ...data.profile };
       config.value = p.config_text;
       toast("Reverted to the previous version.", "success");
       await load(root);
-    } catch (err) { toast(errorText(err), "error"); }
+      await afterSync(data);
+    } catch (err) { await problem("Could not revert the config", err); }
   };
   const revertBtn = $("[data-revert]", drawer);
   if (revertBtn) revertBtn.onclick = doRevert;
   $("[data-copy]", drawer).onclick = () => copyText(config.value, "Config copied");
 
-  $("[data-toggle]", drawer).onclick = async () => {
-    await toggleProfile(root, p);
-    close();
-  };
-  $("[data-delete]", drawer).onclick = async () => {
-    await deleteProfile(root, p);
-    close();
-  };
+  toggleBtn.onclick = async () => { if (await toggleProfile(root, p)) close(); };
+  retryBtn.onclick = async () => { if (await enableProfile(root, p)) close(); };
+  $("[data-delete]", drawer).onclick = async () => { if (await deleteProfile(root, p)) close(); };
 
   /* --- sharing (US3) --- */
   const shareList = $("[data-share-list]", drawer);

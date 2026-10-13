@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import ovpn
+from . import ovpn, tunnels
 from .db import get_conn
 from .settings import CONFIG
 
@@ -79,6 +79,8 @@ def scan() -> list[dict[str, Any]]:
                 row["parse_error"] = str(exc)[:120]
                 out.append(row)
                 continue
+            if tunnels.owner_of(text) is not None:
+                continue  # an installed copy the console wrote itself, not a profile to import
             meta = ovpn.parse(text)
             row.update({
                 "endpoint": (lambda e: f"{e['host']}:{e['port']}" if e else None)(

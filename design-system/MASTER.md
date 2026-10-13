@@ -89,3 +89,17 @@ text uses `--accent-ink #1A0B02`), semantics re-stepped brighter. Applied both u
 
 State is always dot + label, never color alone. Red is reserved for broken or
 internet-facing (Funnel). Blue (info) marks tailnet scope.
+
+### Server tunnels (profiles)
+
+A profile with a tunnel on this server shows the tunnel's state in the Status column in
+place of its library status: **Connected** (green, with the tunnel address under it),
+**Connecting** and **Stopping** (amber), **Failed** (red). Profiles without a tunnel keep
+Valid, Expiring, Expired, Disabled or Parse error. A certificate badge (Expired, Expiring)
+sits next to the date so a Disabled profile cannot hide a lapsed certificate.
+
+Enable and Disable act on the real machine, so they always open a confirm dialog. Scripts
+in a profile raise it to type-to-confirm with the profile name. A slow action shows one
+flat progress line above the table (and inside the drawer for a save or revert); its
+outcome is a toast when it worked and a dialog when it did not, because failures name
+lines and log output that a 4 s toast cannot hold.

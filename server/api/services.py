@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body
 
-from .. import audit
+from .. import audit, jobs
 from ..adapters.host import unit_allowed
 from . import common
 from .schemas import api_error, require_confirm
@@ -20,11 +20,6 @@ router = APIRouter()
 
 ACTIONS = ("start", "stop", "restart", "enable", "disable")
 CONFIRM_ACTIONS = {"stop", "restart"}
-
-_jobs: dict[str, dict[str, Any]] = {}
-_seq = 0
-_lock = threading.Lock()
-
 
 def _units_result():
     return common.host_get("units", ttl=15.0, fetch=common.host().units)
@@ -50,19 +45,15 @@ def unit_action(unit: str, action: str, body: dict = Body(default={})) -> dict[s
 
 
 def _launch(unit: str, action: str) -> str:
-    global _seq
-    with _lock:
-        _seq += 1
-        job_id = f"job-{_seq}"
-    _jobs[job_id] = {"done": False, "ok": False, "detail": f"{action} {unit}…"}
+    job_id = jobs.create(f"{action} {unit}…")
 
     def work() -> None:
         try:
             common.host().unit_action(unit, action)
-            _jobs[job_id].update(done=True, ok=True, detail="")
+            jobs.update(job_id, done=True, ok=True, detail="")
             audit.insert(f"service.{action}", "services", target=unit)
         except Exception as exc:  # noqa: BLE001 — audited boundary (SC-004)
-            _jobs[job_id].update(done=True, ok=False, detail=str(exc)[:300])
+            jobs.update(job_id, done=True, ok=False, detail=str(exc)[:300])
             audit.insert(f"service.{action}", "services", target=unit, outcome="failed",
                          detail={"error": str(exc)[:300]})
         common.host_cache().invalidate("units")
@@ -73,7 +64,7 @@ def _launch(unit: str, action: str) -> str:
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, Any]:
-    job = _jobs.get(job_id)
+    job = jobs.get(job_id)
     if job is None:
         raise api_error(404, "not_found", "Unknown job id.")
-    return dict(job)
+    return job

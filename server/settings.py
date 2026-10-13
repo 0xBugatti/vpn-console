@@ -63,6 +63,7 @@ class Config:
     poll_lists_s: int = 60
     adapters: str = "real"  # VPNCONSOLE_ADAPTERS=real|fake (research D12)
     scan_dirs: str = ""  # comma-separated read-only host mounts to scan
+    tunnel_dir: str = ""  # read-write mount of the host's /etc/openvpn/client (tunnels)
     session_secret: bytes = field(repr=False, default=b"")
 
     @property
@@ -96,6 +97,7 @@ def load_config() -> Config:
         poll_lists_s=int(os.environ.get("VPNCONSOLE_POLL_LISTS_S", "60")),
         adapters=os.environ.get("VPNCONSOLE_ADAPTERS", "real"),
         scan_dirs=os.environ.get("VPNCONSOLE_SCAN_DIRS", ""),
+        tunnel_dir=os.environ.get("VPNCONSOLE_TUNNEL_DIR", ""),
         session_secret=secret.encode() or secrets.token_bytes(32),
     )
 

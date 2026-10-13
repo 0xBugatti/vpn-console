@@ -63,9 +63,14 @@ filtering by tag and status.
 3. **Given** a file identical to an existing profile, **When** it is imported, **Then** the
    admin is asked to **Replace** the existing profile or **Keep both** — never silently
    duplicated or overwritten.
-4. **Given** any profile, **When** it is renamed, tagged, or disabled via its toggle,
-   **Then** the change is reflected immediately and an undo toast appears for disable/enable
-   (no confirmation dialog).
+4. **Given** any profile, **When** it is renamed or tagged, **Then** the change is
+   reflected immediately and an undo toast appears (no confirmation dialog). A rename is
+   refused while the profile is Enabled, because its server tunnel is named after it.
+4a. **Given** a profile that can run unattended, **When** the admin clicks **Enable** and
+   confirms, **Then** the console installs a tunnel-only copy on this server, starts it,
+   starts it again after a reboot once it has connected, and shows the tunnel address;
+   **When** the admin clicks **Disable** and confirms, **Then** the tunnel stops and no
+   longer starts on boot (see FR-012a to FR-012g).
 5. **Given** profiles exist, **When** the admin searches free text or `key:value` tokens
    (tag, status, cipher, server), **Then** the table filters accordingly and shows the
    active-filter chips with a way to clear them.
@@ -435,8 +440,38 @@ on a scratch instance.
   days), Expired, Disabled, Parse error — recomputed from certificate dates and enabled
   state.
 - **FR-012**: System MUST offer per-profile row actions: Download, QR, Copy config, Share
-  link, Edit, Disable/Enable, Delete — with Delete as a confirm dialog, Disable/Enable as
-  toggle + undo toast.
+  link, Edit, Disable/Enable, Delete — with Delete as a confirm dialog. Enable and Disable
+  change this server's real VPN tunnel and so use confirm dialogs (FR-012a to FR-012g),
+  not the undo toast.
+- **FR-012a**: **Enable** MUST write a tunnel-only copy of the profile to
+  `/etc/openvpn/client/<name>.conf` (root-only, marked as written by the console), enable
+  `openvpn-client@<name>` for boot and start it. **Disable** MUST stop it and turn boot
+  start off. New imports and system scans start Disabled, and nothing starts or stops when
+  the console itself starts.
+- **FR-012b**: A console tunnel MUST use its own interface name (`vc-<profile id>`, never
+  `tunN`) and MUST NOT take over the server's routing: a pushed default route and DNS are
+  ignored, default-route lines in the profile are commented out of the installed copy, and
+  after it connects the tunnel is stopped and disabled if any of its routes replaces the
+  default route or overlaps an existing route (this server's own network, Docker,
+  Tailscale, or a tunnel started by hand).
+- **FR-012c**: Enable MUST refuse a profile that cannot run unattended (username and
+  password, files outside the profile, expired certificate, parse error) and say which
+  line is the reason. A profile with script lines (`up`, `down`, `route-up`, `plugin`,
+  `tls-verify`, `script-security 2` or higher) MUST list those lines and require the
+  profile name to be typed. Lines that write files or open ports (`log`, `status`,
+  `writepid`, `management`, `daemon`, `chroot`) MUST be removed from the installed copy
+  with a notice; the stored profile is never changed.
+- **FR-012d**: Enable MUST show progress while the tunnel connects (up to about 100 s) and
+  report the tunnel address, or the last log lines if it did not come up. Every outcome
+  MUST be written to the audit log.
+- **FR-012e**: Editing a profile that has a running tunnel MUST ask for confirmation,
+  rewrite the installed copy and restart the tunnel; undo and revert do the same. An edit
+  that cannot be applied (new script lines, a config that cannot run unattended) is saved
+  but not applied, and the console says so.
+- **FR-012f**: Deleting a profile removes it from the console only. Its server tunnel and
+  installed config are left as they are, and the Delete dialog says so.
+- **FR-012g**: Changes to a server tunnel MUST be refused while the host layer cannot be
+  read, and a config the console did not write MUST never be overwritten.
 - **FR-013**: System MUST keep the previous version of an edited profile config and offer
   undo (≈10 s toast) plus "revert to previous version" in the detail drawer.
 - **FR-014**: System MUST generate QR codes encoding a download URL by default, with an

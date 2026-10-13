@@ -21,6 +21,7 @@ from ..db import get_conn
 from ..searchlang import predicate
 from ..settings import CONFIG
 from ..undo import store as undo_store
+from . import common, tunnelctl
 from .schemas import api_error, require_confirm, require_typed
 
 router = APIRouter()
@@ -47,7 +48,8 @@ def _file_path(pid: str) -> Path:
 
 
 def _store_profile(name: str, text: str, tags: list[str] | None = None) -> str:
-    """Insert a parsed profile; returns its id."""
+    """Insert a parsed profile; returns its id. New profiles start Disabled (no tunnel):
+    a tunnel only starts when somebody clicks Enable."""
     pid = secrets.token_urlsafe(8)
     meta = ovpn.parse(text)
     _file_path(pid).write_text(text, encoding="utf-8")
@@ -55,12 +57,12 @@ def _store_profile(name: str, text: str, tags: list[str] | None = None) -> str:
         "INSERT INTO profiles(id, name, tags, file_path, size_bytes, endpoints, cipher,"
         " tls_version_min, has_auth_user_pass, cert_expires_at, parse_error, status,"
         " enabled, config_sha256, updated_at)"
-        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)",
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
         (
             pid, name, json.dumps(tags or []), str(_file_path(pid)), len(text.encode()),
             json.dumps(meta["endpoints"]), meta["cipher"], meta["tls_version_min"],
             int(meta["has_auth_user_pass"]), meta["cert_expires_at"], meta["parse_error"],
-            ovpn.derive_status(meta["cert_expires_at"], True, meta["parse_error"]),
+            ovpn.derive_status(meta["cert_expires_at"], False, meta["parse_error"]),
             meta["config_sha256"], _now(),
         ),
     )
@@ -103,7 +105,19 @@ def _get_row(pid: str) -> dict[str, Any]:
     return dict(row)
 
 
-def _view(row: dict[str, Any], with_text: bool = False) -> dict[str, Any]:
+def _set_enabled(pid: str, enabled: bool) -> None:
+    """Flip the enabled flag (and the stored status with it). Safe if the profile is gone."""
+    try:
+        row = _get_row(pid)
+    except Exception:  # noqa: BLE001 — deleted while a tunnel job was running
+        return
+    get_conn().execute(
+        "UPDATE profiles SET enabled=?, status=? WHERE id=?",
+        (int(enabled), ovpn.derive_status(row["cert_expires_at"], enabled, row["parse_error"]), pid),
+    )
+
+
+def _view(row: dict[str, Any], with_text: bool = False, tunnel: dict[str, Any] | None = None) -> dict[str, Any]:
     status = ovpn.derive_status(row["cert_expires_at"], bool(row["enabled"]), row["parse_error"])
     names = get_conn().execute(
         "SELECT COUNT(*) AS n FROM profiles WHERE name=? AND id != ?",
@@ -126,6 +140,8 @@ def _view(row: dict[str, Any], with_text: bool = False) -> dict[str, Any]:
         "config_sha256": row["config_sha256"],
         "name_shared": names > 0,
     }
+    if tunnel is not None:
+        out["tunnel"] = tunnel
     if row["previous_text"]:
         out["previous_sha256"] = hashlib.sha256(row["previous_text"].encode()).hexdigest()
     if with_text:
@@ -156,7 +172,8 @@ def list_profiles(q: str = "") -> dict[str, Any]:
                 "error": bool(r["parse_error"]),
             },
         })(r)]
-    return {"profiles": [_view(r) for r in rows]}
+    states = tunnelctl.summaries(rows)
+    return {"profiles": [_view(r, tunnel=states.get(r["id"])) for r in rows]}
 
 
 @router.get("/profiles/scan")
@@ -209,14 +226,30 @@ def import_system_profile(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/profiles/{pid}")
 def get_profile(pid: str) -> dict[str, Any]:
-    return _view(_get_row(pid), with_text=True)
+    row = _get_row(pid)
+    return _view(row, with_text=True, tunnel=tunnelctl.summaries([row])[pid])
+
+
+@router.get("/profiles/{pid}/tunnel")
+def get_tunnel(pid: str) -> dict[str, Any]:
+    """The tunnel's state, the last log lines, and what Enable would do (for its dialog)."""
+    row = _get_row(pid)
+    summary = tunnelctl.summaries([row])[pid]
+    tail: list[dict[str, Any]] = []
+    if summary["state"] not in ("none", "unknown"):
+        try:
+            tail = [{"ts": e["ts"], "msg": e["msg"]} for e in common.host().journal(summary["unit"], limit=8)]
+        except Exception:  # noqa: BLE001 — a missing journal must not hide the state
+            tail = []
+    return {"tunnel": summary, "plan": tunnelctl.plan(row, _read_text(pid)), "log_tail": tail}
 
 
 @router.get("/profiles/{pid}/download")
 def download_profile(pid: str) -> Response:
     row = _get_row(pid)
     text = _read_text(pid)
-    status = ovpn.derive_status(row["cert_expires_at"], bool(row["enabled"]), row["parse_error"])
+    # certificate state, whatever the Enable switch says: the client warns before import (FR-019)
+    status = ovpn.derive_status(row["cert_expires_at"], True, row["parse_error"])
     return Response(
         content=text,
         media_type="application/x-openvpn-profile",
@@ -300,7 +333,8 @@ def confirm_import(body: dict[str, Any]) -> dict[str, Any]:
     row = _get_row(target)
     audit.insert("profile.replace", "profiles", target=row["name"],
                  detail={"id": target, "replaced_duplicate": True})
-    return {"profile": _view(row)}
+    sync = tunnelctl.resync(row, stash["text"], restart=False, on_unsafe=lambda: _set_enabled(target, False))
+    return {"profile": _view(row), "tunnel": sync}
 
 
 # --- mutations -------------------------------------------------------------------
@@ -312,44 +346,93 @@ def patch_profile(pid: str, body: dict[str, Any]):
     undo_restore = None
     undo_label = None
     event_id = None
+    job_id = None
+    notices: list[str] = []
+    sync: dict[str, Any] | None = None
 
+    def unsafe() -> None:
+        _set_enabled(pid, False)
+
+    # --- checks first: nothing is changed until every one of them has passed ---------
+    new_text: str | None = None
+    renaming = "name" in body and body["name"] != row["name"]
     if "config_text" in body and body["config_text"] != _read_text(pid):
-        new_text: str = body["config_text"]
+        new_text = body["config_text"]
         if len(new_text.encode()) > ovpn.MAX_PROFILE_BYTES:
             raise api_error(413, "too_large", "Config exceeds the 1 MiB cap.")
+        if tunnelctl.has_installed(row):
+            tunnelctl.require_host()
+            if tunnelctl.is_running(row):
+                # saving restarts the running tunnel, so it needs a confirm that names it
+                require_confirm(body)
+    if renaming and (row["enabled"] or tunnelctl.summaries([row])[pid]["state"] != "none"):
+        raise api_error(409, "rename_blocked",
+                        "Disable the profile before renaming it: its server tunnel is named after it.")
+    want = tunnel_state = analysis = None
+    if "enabled" in body:
+        if new_text is not None or renaming:
+            # the tunnel is named after the profile and runs its config: one thing at a time
+            raise api_error(422, "one_change_at_a_time",
+                            "Enable or Disable the profile in a separate step from changing its config or name.")
+        want = bool(body["enabled"])
+        tunnelctl.require_host()
+        tunnel_state = tunnelctl.current(row)["state"]
+        tunnel_up = tunnel_state in tunnelctl.RUNNING
+        if want and not tunnel_up:
+            analysis = tunnelctl.check_runnable(row, _read_text(pid))
+            if analysis.scripts:
+                require_typed(body, row["name"], "to let this profile's scripts run as root")
+            else:
+                require_confirm(body)
+        elif not want and tunnel_up:
+            require_confirm(body)  # stopping a live tunnel
+
+    # --- edit --------------------------------------------------------------------------
+    if new_text is not None:
+        running = tunnelctl.is_running(row)
         old_text = _read_text(pid)
         _reparse_update(pid, new_text, keep_previous=True)
         new_row = _get_row(pid)
         event_id = audit.insert("profile.edit", "profiles", target=new_row["name"],
                                 detail={"id": pid})
-        undo_restore = (lambda pid=pid, old=old_text: _reparse_update(pid, old, keep_previous=False))
+
+        def _undo_edit(pid: str = pid, old: str = old_text) -> None:
+            _reparse_update(pid, old, keep_previous=False)
+            fresh = _get_row(pid)
+            tunnelctl.resync(fresh, old, restart=tunnelctl.is_running(fresh),
+                             on_unsafe=lambda: _set_enabled(pid, False))
+
+        undo_restore = _undo_edit
         undo_label = "profile.edit"
         row = new_row
+        sync = tunnelctl.resync(row, new_text, restart=running, on_unsafe=unsafe)
+        job_id = sync.get("job_id")
+        notices += sync.get("notices", [])
 
-    if "enabled" in body and bool(body["enabled"]) != bool(row["enabled"]):
-        enabled = bool(body["enabled"])
-        previous_enabled = bool(row["enabled"])
-        get_conn().execute(
-            "UPDATE profiles SET enabled=?, status=? WHERE id=?",
-            (int(enabled),
-             ovpn.derive_status(row["cert_expires_at"], enabled, row["parse_error"]),
-             pid),
-        )
-        event_id = audit.insert("profile.disable" if not enabled else "profile.enable",
-                                "profiles", target=row["name"], detail={"id": pid})
-
-        def _restore_enabled(pid: str = pid, prev: bool = previous_enabled,
-                             r: dict[str, Any] = row) -> None:
-            get_conn().execute(
-                "UPDATE profiles SET enabled=?, status=? WHERE id=?",
-                (int(prev), ovpn.derive_status(r["cert_expires_at"], prev, r["parse_error"]), pid),
-            )
-
-        undo_restore = _restore_enabled
-        undo_label = "profile.disable" if not enabled else "profile.enable"
+    # --- Enable starts the tunnel, Disable stops it --------------------------------------
+    if want is not None:
+        tunnel_up = tunnel_state in tunnelctl.RUNNING
+        if want and tunnel_up:
+            _set_enabled(pid, True)  # already up: nothing to start
+        elif want:
+            notices += tunnelctl.install(row, _read_text(pid), analysis)
+            _set_enabled(pid, True)
+            row = _get_row(pid)
+            job_id = tunnelctl.start_job(row, "start", unsafe)
+        elif tunnel_state != "none":
+            _set_enabled(pid, False)
+            row = _get_row(pid)
+            job_id = tunnelctl.stop_job(row)
+        elif want != bool(row["enabled"]):
+            # no tunnel was ever installed for it: only the flag changes, and that is undoable
+            previous_enabled = bool(row["enabled"])
+            _set_enabled(pid, want)
+            event_id = audit.insert("profile.disable", "profiles", target=row["name"], detail={"id": pid})
+            undo_restore = lambda pid=pid, prev=previous_enabled: _set_enabled(pid, prev)  # noqa: E731
+            undo_label = "profile.disable"
         row = _get_row(pid)
 
-    if "name" in body and body["name"] != row["name"]:
+    if renaming:
         new_name = _clean_name(str(body["name"]))
         get_conn().execute("UPDATE profiles SET name=? WHERE id=?", (new_name, pid))
         audit.insert("profile.rename", "profiles", target=new_name,
@@ -366,20 +449,29 @@ def patch_profile(pid: str, body: dict[str, Any]):
 
     if undo_restore is not None and undo_label:
         undo_token = undo_store.register("profiles", undo_label, undo_restore, event_id or 0)
-    return {"profile": _view(row, with_text=True), "undo_token": undo_token}
+    return {"profile": _view(row, with_text=True, tunnel=tunnelctl.summaries([row])[pid]),
+            "undo_token": undo_token, "job_id": job_id, "notices": notices, "tunnel_sync": sync}
 
 
 @router.post("/profiles/{pid}/revert")
-def revert_profile(pid: str):
+def revert_profile(pid: str, body: dict[str, Any] | None = None):
     """Swap config back to the stored previous version (FR-012); revertible itself."""
     row = _get_row(pid)
     if not row["previous_text"]:
         raise api_error(409, "nothing_to_revert", "No previous version is stored for this profile.")
+    running = False
+    if tunnelctl.has_installed(row):
+        tunnelctl.require_host()
+        running = tunnelctl.is_running(row)
+        if running:
+            require_confirm(body or {})  # reverting restarts the running tunnel
     _reparse_update(pid, row["previous_text"], keep_previous=True)  # old↔new swap
     fresh = _get_row(pid)
     audit.insert("profile.revert", "profiles", target=fresh["name"],
                  detail={"id": pid})
-    return {"profile": _view(fresh, with_text=True)}
+    sync = tunnelctl.resync(fresh, _read_text(pid), restart=running, on_unsafe=lambda: _set_enabled(pid, False))
+    return {"profile": _view(fresh, with_text=True, tunnel=tunnelctl.summaries([fresh])[pid]),
+            "job_id": sync.get("job_id"), "tunnel_sync": sync}
 
 
 def _delete_row(pid: str) -> dict[str, Any]:
@@ -393,9 +485,13 @@ def _delete_row(pid: str) -> dict[str, Any]:
 @router.delete("/profiles/{pid}")
 def delete_profile(pid: str, body: dict[str, Any] | None = None):
     require_confirm(body or {})
-    row = _delete_row(pid)
-    audit.insert("profile.delete", "profiles", target=row["name"], detail={"id": pid})
-    return {"ok": True}
+    row = _get_row(pid)
+    left = tunnelctl.summaries([row])[pid]  # a tunnel it has on the server is left as it is (owner decision)
+    _delete_row(pid)
+    audit.insert("profile.delete", "profiles", target=row["name"],
+                 detail={"id": pid, **({"tunnel_left": left["unit"]} if left["state"] not in ("none", "unknown") else {})})
+    return {"ok": True,
+            "tunnel_left": left["unit"] if left["state"] not in ("none", "unknown") else None}
 
 
 @router.post("/profiles/bulk-delete")

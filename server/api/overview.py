@@ -12,8 +12,8 @@ from typing import Any
 
 from fastapi import APIRouter, Body
 
-from .. import audit, attention, db
-from . import common
+from .. import audit, attention, db, ovpn, tunnels
+from . import common, tunnelctl
 from .schemas import api_error
 
 router = APIRouter()
@@ -26,10 +26,13 @@ _TUNNEL_UNIT_RE = re.compile(r"^openvpn-client@(.+)\.service$")
 def _profile_rows() -> list[dict]:
     with db.get_conn() as c:
         rows = c.execute(
-            "SELECT id, name, status, enabled, cert_expires_at FROM profiles"
+            "SELECT id, name, enabled, cert_expires_at, parse_error FROM profiles"
         ).fetchall()
+    # Certificate alerts cover every profile, Disabled ones included: new imports start
+    # Disabled, and skipping them would hide an expiring certificate.
     return [
-        {"id": r["id"], "name": r["name"], "status": r["status"],
+        {"id": r["id"], "name": r["name"],
+         "status": ovpn.derive_status(r["cert_expires_at"], True, r["parse_error"]),
          "enabled": bool(r["enabled"]), "cert_expires_at": r["cert_expires_at"] or ""}
         for r in rows
     ]
@@ -83,32 +86,24 @@ def _vpn_services(services: list[dict], profile_rows: list[dict]) -> dict[str, A
         return {"unit": unit, "state": found.get("state", "unknown"),
                 "sub_state": found.get("sub_state", "")}
 
-    tunnels = []
-    for p in profile_rows:
-        # systemd unit instances use the profile name escaped; names imported
-        # through this console are already unit-safe, but escape defensively
-        instance = re.sub(r"[^a-zA-Z0-9:_.\\-]", "@", p["name"])
-        unit = f"openvpn-client@{instance}.service"
-        found = by_unit.get(unit)
-        if found is None:  # tolerate unescaped lookups too
-            found = next((s for s in services if s["unit"].startswith(
-                f"openvpn-client@{p['name']}")), None)
-        if found is None:
-            state = "not-installed"
-        elif found.get("state") == "active":
-            state = "up"
-        else:
-            state = "down"
-        tunnels.append({"id": p["id"], "name": p["name"], "unit": unit, "state": state})
+    shown = {"connected": "up", "connecting": "connecting", "failed": "failed",
+             "stopped": "down", "none": "not-installed", "unknown": "down"}
+    states = tunnelctl.summaries(profile_rows)
+    tunnel_rows = [
+        {"id": p["id"], "name": p["name"], "unit": states[p["id"]]["unit"],
+         "state": shown.get(states[p["id"]]["state"], "down")}
+        for p in profile_rows
+    ]
 
     return {
         "tailscale": _row("tailscaled.service"),
         "openvpn": _row("openvpn.service"),
-        "tunnels": tunnels,
+        "tunnels": tunnel_rows,
     }
 
 
-def _server_ips(local: dict | None, tunnels: list[dict] | None = None) -> dict[str, Any]:
+def _server_ips(local: dict | None, tunnel_ifaces: list[dict] | None = None,
+                profile_rows: list[dict] | None = None) -> dict[str, Any]:
     """Public IPv4 + Tailscale IPv4 + OpenVPN tunnel IPv4s (host's own view)."""
     public = ""
     try:
@@ -124,10 +119,12 @@ def _server_ips(local: dict | None, tunnels: list[dict] | None = None) -> dict[s
         if "." in ip:  # v4 first for display; v6 stays on the Node page
             tailscale = ip
             break
+    names = {tunnels.iface_name(p["id"]): p["name"] for p in profile_rows or []}
     return {
         "public": public,
         "tailscale": tailscale,
-        "openvpn": [{"iface": t["iface"], "addr": t["addr"]} for t in tunnels or []],
+        "openvpn": [{"iface": t["iface"], "addr": t["addr"], "profile": names.get(t["iface"], "")}
+                    for t in tunnel_ifaces or []],
     }
 
 
@@ -182,7 +179,7 @@ def overview() -> dict[str, Any]:
             "services": {"running": running, "total": len(services)},
         },
         "vpn_services": _vpn_services(services, profile_rows),
-        "ips": _server_ips(local, _tunnel_rows()),
+        "ips": _server_ips(local, _tunnel_rows(), profile_rows),
         "recent": audit.query(limit=10)[0],
         "_health": health,
     }

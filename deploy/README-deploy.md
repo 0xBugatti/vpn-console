@@ -39,6 +39,7 @@ ADMIN_PASSWORD=<choose-a-long-password>
 # Optional — uvicorn port (8090 default; host network, so no mapping needed):
 #VPNCONSOLE_PORT=8090
 #VPNCONSOLE_BIND=127.0.0.1   # local only (default); 0.0.0.0 = all interfaces
+#VPNCONSOLE_TUNNEL_DIR=/host-openvpn-client   # where Enable installs tunnel configs (mount of /etc/openvpn/client)
 EOF
 chmod 600 .env
 docker compose up -d --build

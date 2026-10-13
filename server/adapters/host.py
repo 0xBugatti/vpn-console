@@ -7,19 +7,25 @@ as an explicit `unavailable` health state — never silent emptiness (FR-053).
 from __future__ import annotations
 
 import fcntl
+import os
 import re
 import shutil
 import socket
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from .. import tunnels
+from ..settings import CONFIG
 
 ALLOWED_UNITS = ("tailscaled.service", "openvpn.service", "openvpn@*.service",
                  "openvpn-client@*.service", "vpn-console.service")
 
 NET_CLASS_DIR = Path("/sys/class/net")
-_TUNNEL_PREFIXES = ("tun", "tap", "wg")
+_TUNNEL_PREFIXES = ("tun", "tap", "wg", tunnels.IFACE_PREFIX)
+_INSTANCE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,39}")
 
 SYSTEMD_SOCKET = "/run/systemd/private"
 JOURNAL_DIRS = ["/var/log/journal", "/run/log/journal"]
@@ -92,13 +98,92 @@ class HostControl:
             found.append(self.unit_state(unit))
         return found
 
-    def unit_action(self, unit: str, action: str) -> str:
+    def unit_action(self, unit: str, action: str, now: bool = False) -> str:
         if action not in ("start", "stop", "restart", "enable", "disable"):
             raise ValueError(f"unsupported action {action}")
         if not unit_allowed(unit):
             raise PermissionError(f"unit {unit} is not managed by the console")
-        self._run([self.systemctl, action, unit], timeout=60)
+        flags = ["--now"] if now and action in ("enable", "disable") else []
+        self._run([self.systemctl, action, *flags, unit], timeout=60)
         return f"{action}:{unit}"
+
+    def unit_queue(self, unit: str, action: str = "start") -> None:
+        """Queue a start or restart and return at once. A Type=notify tunnel only becomes
+        active when the VPN is really up (up to ~90 s), so the caller polls unit_state."""
+        if action not in ("start", "restart"):
+            raise ValueError(f"unsupported action {action}")
+        if not unit_allowed(unit):
+            raise PermissionError(f"unit {unit} is not managed by the console")
+        self._run([self.systemctl, action, "--no-block", unit], timeout=20)
+
+    # --- tunnel configs: the host's /etc/openvpn/client, mounted read-write ---------------
+
+    @staticmethod
+    def _tunnel_dir() -> Path | None:
+        return Path(CONFIG.tunnel_dir) if CONFIG.tunnel_dir else None
+
+    def tunnel_available(self) -> bool:
+        folder = self._tunnel_dir()
+        return bool(folder and folder.is_dir() and os.access(folder, os.W_OK))
+
+    def _conf_path(self, instance: str) -> Path:
+        folder = self._tunnel_dir()
+        if folder is None:
+            raise FileNotFoundError("the tunnel folder is not mounted (VPNCONSOLE_TUNNEL_DIR)")
+        if not _INSTANCE_RE.fullmatch(instance):
+            raise ValueError("unsafe tunnel name")
+        return folder / f"{instance}.conf"
+
+    def tunnel_conf_owner(self, instance: str) -> str | None:
+        """None = no config yet; "" = a config the console did not write; otherwise the id
+        of the profile whose installed copy it is."""
+        path = self._conf_path(instance)
+        if path.is_symlink():
+            return ""
+        if not path.exists():
+            return None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return tunnels.owner_of(fh.readline()) or ""
+        except OSError:
+            return ""
+
+    def tunnel_read(self, instance: str) -> str | None:
+        path = self._conf_path(instance)
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    def tunnel_write(self, instance: str, text: str) -> None:
+        """Atomically write an installed copy (root only, 0600)."""
+        path = self._conf_path(instance)
+        if path.is_symlink():
+            raise PermissionError(f"{path.name} is a symlink; refusing to write through it")
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".vpnconsole-", suffix=".tmp")
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def routes(self) -> list[dict[str, str]]:
+        """Main-table routes. The container shares the host's network namespace, so
+        /proc/net is the host's."""
+        found = tunnels.parse_proc_net_route(Path("/proc/net/route").read_text())
+        try:
+            found += tunnels.parse_proc_net_ipv6_route(Path("/proc/net/ipv6_route").read_text())
+        except OSError:
+            pass
+        return [r.as_dict() for r in found]
 
     # --- journal ---------------------------------------------------------------
 

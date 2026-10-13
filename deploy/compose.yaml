@@ -39,6 +39,9 @@ services:
       VPNCONSOLE_SCAN_DIRS: ${VPNCONSOLE_SCAN_DIRS:-/scan/openvpn,/scan/home,/scan/root}
       # optional login link token (>= 24 chars); prefer creating one in Settings
       VPNCONSOLE_LOGIN_TOKEN: ${VPNCONSOLE_LOGIN_TOKEN:-}
+      # Enable on a profile installs its tunnel-only copy here as <name>.conf and starts
+      # openvpn-client@<name>. Unset = Enable explains that the folder is not mounted.
+      VPNCONSOLE_TUNNEL_DIR: ${VPNCONSOLE_TUNNEL_DIR:-/host-openvpn-client}
       # Optional — pin session signing across restarts (otherwise regenerated).
       VPNCONSOLE_SESSION_SECRET: ${VPNCONSOLE_SESSION_SECRET:-}
       VPNCONSOLE_PORT: ${VPNCONSOLE_PORT:-8090}
@@ -62,6 +65,9 @@ services:
       - /etc/openvpn:/scan/openvpn:ro
       - /home:/scan/home:ro
       - /root:/scan/root:ro
+      # Server tunnels: ONLY this folder is writable (the rest above stays read-only).
+      # Enable writes <name>.conf here for the host's openvpn-client@<name> unit.
+      - /etc/openvpn/client:/host-openvpn-client:rw
       # SQLite DB + plain .ovpn store — the only state that must survive.
       - data:/data
 

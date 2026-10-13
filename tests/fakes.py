@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -284,6 +285,17 @@ class FakeHost:
             {"ts": "1760082750000000", "prio": 6, "msg": "Routine: startup complete", "cursor": "c4"},
         ]
         self.action_log: list[tuple[str, str]] = []
+        # --- server tunnels (openvpn-client@<name>) ---
+        self.tunnel_files: dict[str, str] = {}          # installed copies, by instance
+        self.tunnel_dir_ok = True                       # False = the folder is not mounted
+        self.tunnel_outcome = "active"                  # what a start does: active | failed | activating
+        self.tunnel_routes: list[str] = ["10.200.1.0/24"]   # networks the fake VPN pushes when it connects
+        self.tunnel_addr = "10.200.0.2"
+        self.routes_data: list[dict[str, str]] = [
+            {"dest": "0.0.0.0/0", "iface": "eth0", "gateway": "203.0.113.1"},
+            {"dest": "203.0.113.0/24", "iface": "eth0", "gateway": ""},
+            {"dest": "172.17.0.0/16", "iface": "docker0", "gateway": ""},
+        ]
 
     def break_(self) -> None:
         self._broken = True
@@ -295,33 +307,115 @@ class FakeHost:
         if self._broken:
             raise FileNotFoundError("systemd socket/journal not mounted (fake)")
 
+    # --- tunnel config files -----------------------------------------------------
+
+    def tunnel_available(self) -> bool:
+        return self.tunnel_dir_ok
+
+    def tunnel_conf_owner(self, instance: str) -> str | None:
+        text = self.tunnel_files.get(instance)
+        if text is None:
+            return None
+        first = text.split("\n", 1)[0].strip()
+        prefix = "# vpn-console-managed profile="
+        return first[len(prefix):].strip() if first.startswith(prefix) else ""
+
+    def tunnel_read(self, instance: str) -> str | None:
+        return self.tunnel_files.get(instance)
+
+    def tunnel_write(self, instance: str, text: str) -> None:
+        self._check()
+        if not self.tunnel_dir_ok:
+            raise FileNotFoundError("the tunnel folder is not mounted (fake)")
+        self.tunnel_files[instance] = text
+
+    def routes(self) -> list[dict[str, str]]:
+        self._check()
+        return [dict(r) for r in self.routes_data]
+
+    # --- fake tunnel life cycle ----------------------------------------------------
+
+    @staticmethod
+    def _instance_of(unit: str) -> str:
+        return unit[len("openvpn-client@"):-len(".service")]
+
+    def _tunnel_iface(self, unit: str) -> str:
+        for line in reversed(self.tunnel_files.get(self._instance_of(unit), "").split("\n")):
+            m = re.match(r"dev (vc-\S+)$", line.strip())
+            if m:
+                return m.group(1)
+        return "vc-unknown"
+
+    def _ensure_tunnel_unit(self, unit: str) -> dict[str, Any]:
+        if unit not in self.units_data:
+            self.units_data[unit] = {
+                "unit": unit, "description": f"OpenVPN tunnel for {self._instance_of(unit)}",
+                "state": "inactive", "sub_state": "dead", "enabled_on_boot": False,
+                "since": "", "result": "success",
+            }
+        return self.units_data[unit]
+
+    def _tunnel_up(self, unit: str) -> None:
+        data = self.units_data[unit]
+        data["state"] = self.tunnel_outcome
+        data["sub_state"] = {"active": "running", "failed": "failed", "activating": "start"}[self.tunnel_outcome]
+        data["since"] = "just now"
+        if self.tunnel_outcome == "active":
+            iface = self._tunnel_iface(unit)
+            self.interfaces_data = [i for i in self.interfaces_data if i["iface"] != iface]
+            self.interfaces_data.append({"iface": iface, "addr": self.tunnel_addr})
+            self.routes_data = [r for r in self.routes_data if r["iface"] != iface]
+            self.routes_data += [{"dest": d, "iface": iface, "gateway": ""} for d in self.tunnel_routes]
+
+    def _tunnel_down(self, unit: str) -> None:
+        iface = self._tunnel_iface(unit)
+        self.interfaces_data = [i for i in self.interfaces_data if i["iface"] != iface]
+        self.routes_data = [r for r in self.routes_data if r["iface"] != iface]
+        self.units_data[unit].update(state="inactive", sub_state="dead")
+
     def units(self) -> list[dict[str, Any]]:
         self._check()
         return [dict(v) for v in self.units_data.values()]
 
     def unit_state(self, unit: str) -> dict[str, Any]:
         self._check()
+        if unit.startswith("openvpn-client@") and unit not in self.units_data:  # like systemd: unknown = inactive
+            return {"unit": unit, "description": "", "state": "inactive", "sub_state": "dead",
+                    "enabled_on_boot": False, "since": "", "result": "success"}
         return dict(self.units_data[unit])
 
-    def unit_action(self, unit: str, action: str) -> str:
+    def unit_action(self, unit: str, action: str, now: bool = False) -> str:
         """Synchronous, like the real systemctl call (job tracking is the API layer's)."""
         self._check()
+        tunnel = unit.startswith("openvpn-client@")
+        if tunnel:
+            self._ensure_tunnel_unit(unit)
         if unit not in self.units_data:
             raise PermissionError(f"unit {unit} is not managed by the console")
         self.action_log.append((unit, action))
         unit_data = self.units_data[unit]
         if action == "stop":
-            unit_data["state"] = "inactive"
+            self._tunnel_down(unit) if tunnel else unit_data.update(state="inactive")
         elif action == "start":
-            unit_data["state"] = "running"
+            self._tunnel_up(unit) if tunnel else unit_data.update(state="running")
         elif action == "restart":
-            unit_data["state"] = "running"
-            unit_data["since"] = "just now"
+            if tunnel:
+                self._tunnel_down(unit)
+                self._tunnel_up(unit)
+            else:
+                unit_data.update(state="running", since="just now")
         elif action == "enable":
             unit_data["enabled_on_boot"] = True
+            if now and tunnel:
+                self._tunnel_up(unit)
         elif action == "disable":
             unit_data["enabled_on_boot"] = False
+            if now:
+                self._tunnel_down(unit) if tunnel else unit_data.update(state="inactive")
         return f"{action}:{unit}"
+
+    def unit_queue(self, unit: str, action: str = "start") -> None:
+        self.unit_action(unit, action)  # the fake settles at once; the real one is polled
 
     def journal(self, unit: str, since: str = "", severity: int | None = None,
                 text: str = "", limit: int = 200, after_cursor: str = "") -> list[dict[str, Any]]:

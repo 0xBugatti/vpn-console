@@ -111,6 +111,7 @@ h2 { font-size: 15px; font-weight: 650; letter-spacing: -0.005em; }
 h3 { font-size: 13.5px; font-weight: 600; }
 a { color: var(--accent-strong); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 2px; }
+[hidden] { display: none !important; }
 code, .mono { font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 ::placeholder { color: var(--faint); opacity: 1; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
@@ -467,6 +468,34 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .dialog .btn-row { justify-content: flex-end; }
 .dialog.danger-accent { border-top: 4px solid var(--danger); }
 dialog .no-default-focus:focus { outline: none; }
+.dialog .body p { margin: 0 0 10px; }
+.dialog .body p:last-child { margin-bottom: 0; }
+
+/* --- server tunnels: progress, plan lists, state box, log --- */
+.progress-line {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--border); background: var(--surface-2);
+  border-radius: var(--radius-item); padding: 10px 14px; margin-bottom: 16px; font-size: 13.5px;
+}
+.progress-line[hidden] { display: none; }
+.progress-line .faint { margin-left: auto; font-variant-numeric: tabular-nums; }
+.progress-line svg { color: var(--muted); }
+.plan-list { margin: 0 0 12px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.plan-list:empty { display: none; }
+.plan-lines { margin: 0 0 10px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.plan-lines li {
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-item);
+  padding: 7px 10px; overflow-wrap: anywhere;
+}
+.tunnel-box { border: 1px solid var(--border); border-radius: var(--radius-item); padding: 12px 14px; background: var(--surface); }
+.tunnel-state { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.kv.compact { grid-template-columns: 90px minmax(0, 1fr); gap: 4px 12px; margin-bottom: 10px; }
+.log-tail {
+  margin: 0; padding: 8px 10px; max-height: 150px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-item); background: var(--surface-2);
+  font: 12px/1.5 var(--font-mono); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
 
 /* --- toasts --- */
 .toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 90; max-width: calc(100vw - 32px); }
