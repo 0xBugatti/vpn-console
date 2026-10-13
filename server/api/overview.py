@@ -59,8 +59,7 @@ def _exposure_rows() -> list[dict]:
     drive = exposures_api._drive_r()
     if serve.health.state != "ok" or drive.health.state != "ok":
         return []
-    return exposures_api._entries((serve.data or {}).get("Config") or {},
-                                  drive.data or {})
+    return exposures_api._entries(serve.data or {}, drive.data or [])
 
 
 def _policy_errors() -> list[str]:

@@ -123,8 +123,9 @@ class FakeLocal:
         self.advertise_exit = False
         self.using_exit = ""
         self.advertised_routes: list[str] = ["10.20.0.0/16"]
-        self.serve_config: dict[str, Any] = _load("cli/serve-status.json")["Config"]
-        self.drive_shares_data: dict[str, Any] = _load("cli/drive-status.json")["Config"]["Shares"]
+        # real shapes (ipn.ServeConfig / drive shares), see tests/fixtures/cli/real/
+        self.serve_config: dict[str, Any] = _load("cli/serve-status.json")
+        self.drive_shares_data: list[dict[str, Any]] = _load("cli/drive-shares.json")
 
     def break_(self) -> None:
         self._broken = True
@@ -159,11 +160,11 @@ class FakeLocal:
 
     def serve_status(self) -> dict[str, Any]:
         self._check()
-        return {"Version": "3", "Config": self.serve_config}
+        return self.serve_config
 
-    def drive_status(self) -> dict[str, Any]:
+    def drive_shares(self) -> list[dict[str, Any]]:
         self._check()
-        return {"Version": "1", "Config": {"Shares": self.drive_shares_data}}
+        return [dict(share) for share in self.drive_shares_data]
 
     def connect(self) -> None:
         self._check()
@@ -192,10 +193,8 @@ class FakeLocal:
 
     @property
     def dns_name(self) -> str:
-        for tcp in self.serve_config.get("TCP", {}).values():
-            host = (tcp.get("ServeURL") or "").split("//")[-1]
-            if host:
-                return host.split(":")[0]
+        for key in self.serve_config.get("Web", {}):
+            return key.rpartition(":")[0]
         return "build.fangorn.example.com"
 
     def serve_add(self, port: int, target: str, scheme: str = "https",
@@ -203,33 +202,34 @@ class FakeLocal:
         self._check()
         cfg = self.serve_config
         key = str(port)
-        url = f"{scheme}://{self.dns_name}" + (f":{port}" if scheme == "http" else "")
-        cfg["TCP"][key] = {"MustAcceptTLS": scheme == "https", "ServeURL": url}
-        cfg.setdefault("Web", {})[f"{self.dns_name}:{key}"] = {
-            "Handlers": {"/": {"Proxy": target}}
-        }
+        host = self.dns_name
+        cfg.setdefault("TCP", {})[key] = {"HTTPS": True} if scheme == "https" else {"HTTP": True}
+        handler = {"Proxy": target} if target.startswith(("http://", "https://")) else {"Path": target}
+        cfg.setdefault("Web", {})[f"{host}:{key}"] = {"Handlers": {"/": handler}}
         allow = cfg.setdefault("AllowFunnel", {})
         if funnel:
-            allow[f"{self.dns_name}:{key}"] = True
+            allow[f"{host}:{key}"] = True
         else:
-            allow.pop(f"{self.dns_name}:{key}", None)
+            allow.pop(f"{host}:{key}", None)
 
     def serve_off(self, port: int, scheme: str = "https", funnel: bool = False) -> None:
         self._check()
         cfg = self.serve_config
         key = str(port)
+        host = self.dns_name
         cfg.get("TCP", {}).pop(key, None)
-        cfg.get("Web", {}).pop(f"{self.dns_name}:{key}", None)
+        cfg.get("Web", {}).pop(f"{host}:{key}", None)
         if funnel:
-            cfg.get("AllowFunnel", {}).pop(f"{self.dns_name}:{key}", None)
+            cfg.get("AllowFunnel", {}).pop(f"{host}:{key}", None)
 
     def drive_add(self, name: str, path: str) -> None:
         self._check()
-        self.drive_shares_data[path] = {"access": "readonly", "share_name": name}
+        self.drive_shares_data = [s for s in self.drive_shares_data if s["name"] != name]
+        self.drive_shares_data.append({"name": name, "path": path, "who": "root"})
 
-    def drive_remove(self, path: str) -> None:
+    def drive_remove(self, name: str) -> None:
         self._check()
-        self.drive_shares_data.pop(path, None)
+        self.drive_shares_data = [s for s in self.drive_shares_data if s["name"] != name]
 
 
 class FakeHost:

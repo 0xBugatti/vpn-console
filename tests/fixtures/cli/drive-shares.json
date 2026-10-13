@@ -1,0 +1,4 @@
+[
+  { "name": "photos", "path": "/photos", "who": "root" },
+  { "name": "backup", "path": "/backup", "who": "root" }
+]

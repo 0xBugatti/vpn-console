@@ -26,7 +26,7 @@ def _serve_r():
 
 
 def _drive_r():
-    return common.local_get("drive", ttl=10.0, fetch=common.local().drive_status)
+    return common.local_get("drive", ttl=10.0, fetch=common.local().drive_shares)
 
 
 def _ports_r():
@@ -44,39 +44,65 @@ def _handler_target(handler: dict[str, Any]) -> tuple[str, str]:
     return "", ""
 
 
-def _entries(serve_cfg: dict[str, Any], drive_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _entries(serve_cfg: dict[str, Any], shares: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Serve / funnel / taildrive rows from tailscaled's real shapes (ipn.ServeConfig,
+    tailscale v1.104.1): TCP is keyed by port and holds HTTP or HTTPS (served via Web)
+    or a TCPForward address; Web and AllowFunnel are keyed "host:port"; Taildrive
+    shares arrive as [{"name", "path", "who"}]."""
     web = serve_cfg.get("Web") or {}
     allow = serve_cfg.get("AllowFunnel") or {}
     entries: list[dict[str, Any]] = []
-    for port, tcp in (serve_cfg.get("TCP") or {}).items():
-        if not str(port).isdigit():
-            continue
-        url = tcp.get("ServeURL") or ""
-        host = url.split("//")[-1].split(":")[0]
-        display, raw = _handler_target(web.get(f"{host}:{port}", {}).get("Handlers", {}).get("/") or {})
+    ports = [p for p in (serve_cfg.get("TCP") or {}) if str(p).isdigit()]
+    for port in sorted(ports, key=int):
+        tcp = (serve_cfg.get("TCP") or {}).get(port) or {}
+        suffix = f":{port}"
+        # the Web key carries the host name; prefer the fully qualified one
+        hosts = sorted((k[: -len(suffix)] for k in web if k.endswith(suffix)),
+                       key=lambda h: (-h.count("."), h))
+        forward = str(tcp.get("TCPForward") or "")
+        host = hosts[0] if hosts else str(tcp.get("TerminateTLS") or "")
+        tls = bool(tcp.get("HTTPS"))
         funnel = bool(allow.get(f"{host}:{port}"))
+        if forward:
+            source = f"tcp://{host or 'this host'}:{port}"
+            display, raw = f"tcp → {forward}", ""
+        else:
+            scheme = "https" if tls else "http"
+            default = 443 if tls else 80
+            source = f"{scheme}://{host or 'this host'}" + ("" if int(port) == default else f":{port}")
+            handlers = (web.get(f"{host}:{port}") or {}).get("Handlers") or {}
+            mount = "/" if "/" in handlers else next(iter(handlers), "")
+            display, raw = _handler_target(handlers.get(mount) or {})
+            if len(handlers) > 1:
+                more = len(handlers) - 1
+                display += f" (+{more} more path{'s' if more != 1 else ''})"
         entries.append({
             "id": f"tcp-{port}",
             "kind": "funnel" if funnel else "serve",
             "scope": "public" if funnel else "tailnet",
-            "source": url,
+            "source": source,
             "target": display,
             "raw_target": raw,
             "port": int(port),
-            "tls": bool(tcp.get("MustAcceptTLS")),
+            "tls": tls,
+            "tcp_forward": bool(forward),
             "enabled": True,
         })
-    for path, info in ((drive_cfg.get("Config") or {}).get("Shares") or {}).items():
+    for share in shares or []:
+        name = str(share.get("name") or "")
+        path = str(share.get("path") or "")
+        who = str(share.get("who") or "")
         entries.append({
-            "id": f"drive-{path}",
+            "id": f"drive-{name}",
             "kind": "taildrive",
             "scope": "share",
             "source": path,
-            "target": f"{info.get('access', 'read')} share",
-            "name": info.get("share_name") or "",
+            "target": f"share as {who}" if who else "share",
+            "name": name,
             "raw_target": path,
             "port": None,
             "tls": False,
+            "tcp_forward": False,
             "enabled": True,
         })
     return entries
@@ -118,6 +144,14 @@ def _collisions(entries: list[dict[str, Any]], serve_cfg: dict[str, Any]) -> lis
     return sorted(coll)
 
 
+def _refuse_tcp_forward(entry: dict[str, Any]) -> None:
+    """Raw TCP forwards use `tailscale serve --tcp`, which this page does not drive;
+    they are listed so nothing is hidden, but changed with the CLI."""
+    if entry.get("tcp_forward"):
+        raise api_error(409, "not_supported",
+                        "Raw TCP forwards are shown here but managed with the tailscale CLI.")
+
+
 def _find(entries: list[dict[str, Any]], eid: str) -> dict[str, Any]:
     for e in entries:
         if e["id"] == eid:
@@ -130,9 +164,8 @@ def get_exposures() -> dict[str, Any]:
     serve_r = _serve_r()
     drive_r = _drive_r()
     ports_r = _ports_r()
-    serve_cfg = (serve_r.data or {}).get("Config") or {}
-    drive_cfg = drive_r.data or {}
-    entries = _entries(serve_cfg, drive_cfg)
+    serve_cfg = serve_r.data or {}
+    entries = _entries(serve_cfg, drive_r.data or [])
     annotations = _annotate(ports_r.data or [], entries) if ports_r.data is not None else []
     return {
         "entries": entries,
@@ -222,11 +255,12 @@ def create_exposure(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 @router.patch("/exposures/{eid:path}")
 def set_enabled(eid: str, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     _blocked()
-    entries = _entries((_serve_r().data or {}).get("Config") or {}, _drive_r().data or {})
+    entries = _entries(_serve_r().data or {}, _drive_r().data or [])
     entry = _find(entries, eid)
     enabled = bool(body.get("enabled"))
     if entry["kind"] == "taildrive":
         raise api_error(409, "not_supported", "Taildrive shares are removed, not disabled.")
+    _refuse_tcp_forward(entry)
     if entry["kind"] == "funnel" and enabled:
         require_confirm(body)  # re-enabling a public exposure is confirm-tier
 
@@ -252,12 +286,13 @@ def set_enabled(eid: str, body: dict[str, Any] = Body(default={})) -> dict[str, 
 @router.delete("/exposures/{eid:path}")
 def delete_exposure(eid: str, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     _blocked()
-    entries = _entries((_serve_r().data or {}).get("Config") or {}, _drive_r().data or {})
+    entries = _entries(_serve_r().data or {}, _drive_r().data or [])
     entry = _find(entries, eid)
+    _refuse_tcp_forward(entry)
     require_confirm(body)  # removal is confirm-tier too (contract; the UI dialog supplies it)
     try:
         if entry["kind"] == "taildrive":
-            common.local().drive_remove(entry["source"])
+            common.local().drive_remove(entry["name"])
         else:
             common.local().serve_off(entry["port"], scheme="https" if entry["tls"] else "http",
                                      funnel=entry["kind"] == "funnel")

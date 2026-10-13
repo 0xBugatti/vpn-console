@@ -5,10 +5,12 @@ records the remaining technical decisions. Format: Decision / Rationale / Altern
 
 **D1 — Local tailscaled control: HTTP over the Unix socket first, CLI second.**
 The daemon exposes a local API on `/var/run/tailscale/tailscaled.socket` (status, prefs,
-exit-node selection, route advertisement). Serve/Funnel/Taildrive status is most complete
-via `tailscale serve status --json` / `tailscale drive status --json` CLI calls against
-the same socket. Decision: `tslocal` adapter = socket HTTP (`/localapi/v0/status`,
-`/localapi/v0/prefs`) + CLI subprocess (JSON flags) for serve/funnel/drive; every
+exit-node selection, route advertisement, Taildrive share list). Serve/Funnel status is most
+complete via `tailscale serve status --json` (it prints the bare ServeConfig, no wrapper).
+There is no `tailscale drive status`; shares come from `/localapi/v0/drive/shares` and are
+removed by name (`tailscale drive unshare <name>`). Decision: `tslocal` adapter = socket HTTP
+(`/localapi/v0/status`, `/localapi/v0/prefs`, `/localapi/v0/drive/shares`) + CLI subprocess
+for serve/funnel reads and every mutation; every
 invocation injects `--socket=`. Rationale: stable JSON, no screen-scraping; CLI stays for
 the gaps. Alternatives: CLI-only (brittle text parsing), embedding tsnet (heavy, second
 node identity — rejected).

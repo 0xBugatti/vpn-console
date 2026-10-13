@@ -14,7 +14,7 @@ def test_get_exposures_shape(authed):
     serve = by_id["tcp-8080"]
     assert serve["kind"] == "serve" and serve["scope"] == "tailnet"
 
-    drive = by_id["drive-/photos"]
+    drive = by_id["drive-photos"]
     assert drive["kind"] == "taildrive" and drive["scope"] == "share"
 
     # every listening port carries exactly one annotation (FR-044)
@@ -82,7 +82,7 @@ def test_disable_removes_the_listener(authed):
 
 
 def test_drive_disable_not_supported(authed):
-    r = authed.patch("/api/exposures/drive-/photos", json={"enabled": False})
+    r = authed.patch("/api/exposures/drive-photos", json={"enabled": False})
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "not_supported"
 
@@ -97,9 +97,9 @@ def test_delete_requires_confirm(authed):
 def test_delete_serve_and_drive(authed):
     # this httpx version takes no json= on delete — use request()
     assert authed.request("DELETE", "/api/exposures/tcp-8080", json={"confirm": True}).status_code == 200
-    assert authed.request("DELETE", "/api/exposures/drive-/backup", json={"confirm": True}).status_code == 200
+    assert authed.request("DELETE", "/api/exposures/drive-backup", json={"confirm": True}).status_code == 200
     ids = {e["id"] for e in authed.get("/api/exposures").json()["entries"]}
-    assert "tcp-8080" not in ids and "drive-/backup" not in ids
+    assert "tcp-8080" not in ids and "drive-backup" not in ids
 
     # assert via the audit trail (overview "recent" is a 10-event window)
     actions = [e["action"] for e in authed.get("/api/audit?limit=500").json()["entries"]]
@@ -153,3 +153,39 @@ def test_drive_share_validation(authed):
     r = authed.post("/api/exposures", json={
         "kind": "drive", "path": "/srv/docs", "name": "bad name!", "confirm": True})
     assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_name"
+
+
+# --- real-shape regressions: what the live check on the real host exposed ---
+
+def test_drive_share_roundtrip_by_name(authed, fakes):
+    """Add -> listed (by name) -> remove through the API; removal must reach tailscaled
+    by NAME (the fake only removes by name, as `tailscale drive unshare <name>` does)."""
+    r = authed.post("/api/exposures", json={
+        "kind": "drive", "path": "/tmp/console-drive-test", "name": "consoletest", "confirm": True})
+    assert r.status_code == 200, r.text
+    by_id = {e["id"]: e for e in authed.get("/api/exposures").json()["entries"]}
+    assert by_id["drive-consoletest"]["source"] == "/tmp/console-drive-test"
+    r = authed.request("DELETE", "/api/exposures/drive-consoletest", json={"confirm": True})
+    assert r.status_code == 200, r.text
+    assert "drive-consoletest" not in {e["id"] for e in authed.get("/api/exposures").json()["entries"]}
+    assert all(s["name"] != "consoletest" for s in fakes["local"].drive_shares_data)
+
+
+def test_serve_added_through_the_api_shows_up_and_can_be_removed(authed):
+    r = authed.post("/api/exposures", json={"kind": "serve", "port": 18080,
+                                            "target": "http://127.0.0.1:9", "tls": False})
+    assert r.status_code == 200, r.text
+    by_id = {e["id"]: e for e in authed.get("/api/exposures").json()["entries"]}
+    assert by_id["tcp-18080"]["source"].endswith(":18080")
+    assert authed.request("DELETE", "/api/exposures/tcp-18080", json={"confirm": True}).status_code == 200
+    assert "tcp-18080" not in {e["id"] for e in authed.get("/api/exposures").json()["entries"]}
+
+
+def test_raw_tcp_forward_is_listed_but_not_changed_here(authed, fakes):
+    fakes["local"].serve_config.setdefault("TCP", {})["2222"] = {"TCPForward": "127.0.0.1:22"}
+    by_id = {e["id"]: e for e in authed.get("/api/exposures").json()["entries"]}
+    assert by_id["tcp-2222"]["tcp_forward"] is True
+    r = authed.patch("/api/exposures/tcp-2222", json={"enabled": False})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "not_supported"
+    r = authed.request("DELETE", "/api/exposures/tcp-2222", json={"confirm": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "not_supported"

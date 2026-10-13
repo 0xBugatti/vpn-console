@@ -43,15 +43,19 @@ recorded fixtures (`tests/fixtures/tailscale/*.json`). Maps 429/5xx/timeouts →
 status() -> LocalNode{state, addresses, version, online}
 prefs() -> Prefs{exit_node_advertise, exit_node_using, advertised_routes}
 set_prefs(...)                  # connect/disconnect, exit-node use/advertise, routes
-serve_status() -> list[Exposure]
+serve_status() -> ServeConfig   # bare `tailscale serve status --json`: TCP / Web / AllowFunnel
 funnel_enable/disable(entry) / serve_create/remove(entry)   # confirm enforced by API layer
-drive_status() -> list[Exposure]
+drive_shares() -> [{name, path, who}]   # /localapi/v0/drive/shares (null = none); removed by NAME
+#   the API layer projects both into Exposure rows (server/api/exposures.py::_entries)
 netcheck() -> Netcheck{udp, ipv4, relay, latency}
 ```
 
 Socket: HTTP/1.1 over `/var/run/tailscale/tailscaled.socket` (`/localapi/v0/…`); CLI
 subprocess (`tailscale --socket=<path> serve status --json` etc.) only where localapi has
-no coverage. Faked in tests with canned JSON (`fixtures/cli/*.json`).
+no coverage. Faked in tests with canned JSON (`fixtures/cli/*.json`); `fixtures/cli/real/`
+holds outputs captured from a live tailscaled (v1.104.1). Fixtures must come from the real
+thing: the first version invented the shapes and passed its own tests while the live list
+stayed empty.
 
 ## HostControl (host.py) — systemd/journal/ss (D2)
 

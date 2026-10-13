@@ -32,16 +32,28 @@ def test_status_and_prefs_map_from_localapi(monkeypatch):
     assert local.prefs()["ExitNodeIP"] == ""  # not using an exit node
 
 
-def test_serve_and_drive_json_from_cli(monkeypatch):
+def test_serve_status_is_the_bare_config_tailscale_prints(monkeypatch):
+    """`tailscale serve status --json` prints the ServeConfig itself, with no wrapper."""
     local = make_local()
-    serve_fx = json.loads((FIXTURES / "serve-status.json").read_text())
-    drive_fx = json.loads((FIXTURES / "drive-status.json").read_text())
-    monkeypatch.setattr(local, "_cli_json",
-                        lambda *args: serve_fx if args[0] == "serve" else drive_fx)
-    cfg = local.serve_status()["Config"]
-    assert "443" in cfg["TCP"]
-    shares = local.drive_status()["Config"]["Shares"]
-    assert "/photos" in shares
+    real = json.loads((FIXTURES / "real" / "serve-http.json").read_text())  # captured live, v1.104.1
+    monkeypatch.setattr(local, "_cli_json", lambda *args: real)
+    cfg = local.serve_status()
+    assert cfg["TCP"]["18080"] == {"HTTP": True}
+    assert cfg["Web"]["0xbugatti-vps-1.dwelf-nase.ts.net:18080"]["Handlers"]["/"] == {"Proxy": "http://127.0.0.1:9"}
+
+
+def test_drive_shares_come_from_the_local_api_not_a_cli_status(monkeypatch):
+    """There is no `tailscale drive status`: shares are read from /localapi/v0/drive/shares,
+    and tailscaled answers `null` when nothing is shared."""
+    local = make_local()
+    seen: list[tuple] = []
+    real = json.loads((FIXTURES / "real" / "drive-shares.json").read_text())  # captured live
+    monkeypatch.setattr(local, "_socket_http",
+                        lambda method, path, body=None: seen.append((method, path)) or real)
+    assert local.drive_shares() == [{"name": "consoletest", "path": "/tmp/console-drive-test", "who": "root"}]
+    assert seen == [("GET", "/localapi/v0/drive/shares")]
+    monkeypatch.setattr(local, "_socket_http", lambda *a, **k: None)  # nothing shared
+    assert local.drive_shares() == []
 
 
 def test_cli_mutations_build_expected_args(monkeypatch):
@@ -57,7 +69,7 @@ def test_cli_mutations_build_expected_args(monkeypatch):
     local.serve_add(8080, "http://127.0.0.1:5000", scheme="http")
     local.serve_off(443, scheme="https", funnel=True)
     local.serve_off(8080, scheme="http")
-    local.drive_remove("/photos")
+    local.drive_remove("photos")
     assert calls[0] == ("up",)
     assert calls[1] == ("down",)
     assert calls[2] == ("set", "--exit-node=100.84.12.9", "--advertise-exit-node=true")
@@ -67,7 +79,8 @@ def test_cli_mutations_build_expected_args(monkeypatch):
     assert calls[6] == ("serve", "--bg", "--http=8080", "http://127.0.0.1:5000")
     assert calls[7] == ("funnel", "--bg", "--https=443", "off")
     assert calls[8] == ("serve", "--bg", "--http=8080", "off")
-    assert calls[9] == ("drive", "share", "remove", "/photos")
+    # by NAME: `drive share remove <path>` would add a share called "remove"
+    assert calls[9] == ("drive", "unshare", "photos")
 
 
 def test_missing_socket_is_a_loud_unavailable(tmp_path):

@@ -33,7 +33,7 @@ class TailscaleLocal:
 
     # --- transport ---------------------------------------------------------
 
-    def _socket_http(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _socket_http(self, method: str, path: str, body: dict | None = None) -> Any:
         """Minimal HTTP/1.1 over the tailscaled unix socket (no httpx UDS dep)."""
         if not self.socket_path:
             raise FileNotFoundError("tailscaled socket not found")
@@ -105,13 +105,15 @@ class TailscaleLocal:
         return self._socket_http("GET", "/localapi/v0/prefs")
 
     def serve_status(self) -> dict[str, Any]:
+        """tailscaled's ServeConfig exactly as `tailscale serve status --json`
+        prints it (bare: TCP / Web / AllowFunnel maps, `{}` when nothing is served)."""
         return self._cli_json("serve", "status", "--json")
 
-    def drive_status(self) -> dict[str, Any]:
-        try:
-            return self._cli_json("drive", "status", "--json")
-        except RuntimeError:
-            return {}  # Taildrive may not be compiled in — explicit empty, not a lie
+    def drive_shares(self) -> list[dict[str, Any]]:
+        """Taildrive shares as tailscaled reports them: [{"name", "path", "who"}].
+        The CLI has no JSON listing (and no `drive status`), so this reads the local
+        API; tailscaled answers `null` when nothing is shared."""
+        return list(self._socket_http("GET", "/localapi/v0/drive/shares") or [])
 
     # --- mutations (friction enforced at API layer) ---------------------------
 
@@ -145,12 +147,7 @@ class TailscaleLocal:
         # v1.104 CLI: `tailscale drive share <name> <path>` (name FIRST)
         self._cli("drive", "share", name, path)
 
-    def drive_remove(self, path: str) -> None:
-        self._cli("drive", "share", "remove", path)
-
-    def drive_shares(self) -> list[dict[str, Any]]:
-        data = self.drive_status()
-        return [
-            {"path": path, **(info or {})}
-            for path, info in (data.get("Config", {}).get("Shares") or {}).items()
-        ]
+    def drive_remove(self, name: str) -> None:
+        # Shares are removed by NAME. (`drive share remove <path>` would be read as
+        # "share <path> under the name remove" and add a share instead.)
+        self._cli("drive", "unshare", name)

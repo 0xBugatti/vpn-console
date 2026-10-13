@@ -1,0 +1,16 @@
+{
+  "TCP": {
+    "18080": {
+      "HTTP": true
+    }
+  },
+  "Web": {
+    "0xbugatti-vps-1.dwelf-nase.ts.net:18080": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:9"
+        }
+      }
+    }
+  }
+}

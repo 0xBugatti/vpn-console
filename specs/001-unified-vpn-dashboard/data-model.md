@@ -77,7 +77,9 @@ tagOwners, hosts, nodeAttrs).
 
 ## Exposure
 
-Projected from `tailscale serve|funnel|drive status --json` (D1): `{kind:
+Projected from `tailscale serve status --json` (the bare ServeConfig: `TCP` / `Web` /
+`AllowFunnel`) and the local API's `/localapi/v0/drive/shares` (D1; Taildrive has no JSON CLI
+listing): `{kind:
 serve|funnel|taildrive, target, port, proto, scope: tailnet|public|share, dns_name,
 cert_status, enabled}`. Scope `public` ⇒ red semantics (MASTER §3). Creation constraints:
 funnel port ∈ {443, 8443, 10000}; serve/funnel same-port collision → warning record
